@@ -17,6 +17,7 @@ func split(cl *client, in io.Reader) {
 		msg := scanner.Text()
 		fmt.Println("got msg", msg)
 		tokens := strings.Split(msg, " ")
+
 		if len(tokens) == 2 {
 			switch tokens[0] {
 			case "seek":
@@ -24,27 +25,40 @@ func split(cl *client, in io.Reader) {
 			case "ready":
 				cl.ready = tokens[1] == "true"
 				on_ready_changed()
+			case "pong":
+				cl.lastMsg = time.Now()
+
 			}
+
 		}
 	}
 }
 
 func on_disconnect() {
-	for _, cl := range clients {
-		cl.Lock()
+	clients.RLock()
+	for _, cl := range clients.Map {
 		cl.ready = false
-		cl.Unlock()
 	}
-	on_ready_changed()
+	clients.RUnlock()
+
+	go on_ready_changed()
 }
 
 func on_ready_changed() {
-	seto := len(clients) > 1
-	for _, some_client := range clients {
+	clients.RLock()
+
+	seto := len(clients.Map) > 1
+
+	fmt.Println("TESTO", clients.Map)
+
+	for _, some_client := range clients.Map {
+		fmt.Println("TESTO -- ", some_client)
 		seto = seto && some_client.ready
 	}
+	clients.RUnlock()
 
-	go broadcast(nil, fmt.Sprintf("seto %t", seto))
+	fmt.Println("TESTO", seto)
+	broadcast(nil, fmt.Sprintf("seto %t", seto))
 }
 
 func ping() {
@@ -52,49 +66,85 @@ func ping() {
 		select {
 		case <-time.After(time.Second):
 			go broadcast(nil, "ping")
+			go checkPings()
 		}
 	}
+}
+
+func checkPings() {
+	clients.RLock()
+
+	for conn, cl := range clients.Map {
+		if time.Since(cl.lastMsg) > time.Second*2 {
+			go disconnect(conn)
+		}
+	}
+
+	clients.RUnlock()
+}
+
+func disconnect(conn net.Conn) {
+	fmt.Println("DISCON!")
+
+	clients.Lock()
+	delete(clients.Map, conn)
+	clients.Unlock()
+
+	conn.Close()
+
+	go on_disconnect()
 }
 
 func broadcast(src io.Reader, msg string) {
 	fmt.Fprintf(os.Stderr, "Broadcasting message %v\n", msg)
-	for c, _ := range clients {
+
+	fmt.Println("BR >>")
+	clients.RLock()
+	fmt.Println("BR <<")
+
+	for c, _ := range clients.Map {
 		if c != src {
 			err := sendto(c, msg)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Client socket err: %v\n", err)
-				delete(clients, c)
-				c.Close()
-				on_disconnect()
+				go disconnect(c)
 			}
 		}
 	}
+
+	clients.RUnlock()
 }
 
 func sendto(client net.Conn, msg string) error {
-	lock := clients[client]
-	lock.Lock()
-	defer lock.Unlock()
 
 	writer := bufio.NewWriter(client)
 	_, err := writer.WriteString(msg + "\n")
 	if err != nil {
 		return err
 	}
+
 	err = writer.Flush()
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
-var clients clientsMap
+var (
+	clients *clientsMap = &clientsMap{
+		Map: make(map[net.Conn]*client),
+	}
+)
 
-type clientsMap map[net.Conn]*client
+type clientsMap struct {
+	Map map[net.Conn]*client
+	sync.RWMutex
+}
 
 type client struct {
-	ready bool
-	sync.Mutex
+	ready   bool
+	lastMsg time.Time
 }
 
 func main() {
@@ -105,7 +155,6 @@ func main() {
 		return
 	}
 
-	clients = make(clientsMap)
 	go ping()
 
 	for {
@@ -116,8 +165,14 @@ func main() {
 			continue
 		}
 
-		cl := &client{}
-		clients[conn] = cl
+		cl := &client{
+			lastMsg: time.Now(),
+		}
+
+		clients.Lock()
+		clients.Map[conn] = cl
+		clients.Unlock()
+
 		on_ready_changed()
 		go split(cl, conn)
 	}

@@ -91,6 +91,7 @@ func (m *message) handle() error {
 		setoChanged(m.getBool())
 	case "ping":
 		lastPing = time.Now()
+		sockOut <- "pong :3"
 	default:
 		return fmt.Errorf("Unknown message: `%v`", m)
 	}
