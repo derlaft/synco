@@ -58,7 +58,6 @@ func broadcast(origin string, event *protocol.Event) {
 			continue
 		}
 
-		log.Printf("client %v -- broadcasting event to %v, %#v", origin, name, event)
 		go client.send(event)
 	}
 	clientsLock.Unlock()
