@@ -1,0 +1,37 @@
+syntax = "proto3";
+package protocol;
+
+service Synco {
+    rpc Connect(stream Event) returns (stream Event) {}
+}
+
+message Event {
+    string reason = 1;
+
+    TimeChangeEvent time = 2;
+    ReadyEvent ready = 3;
+    GoEvent go = 4;
+	HelloEvent hello = 5;
+	PingEvent ping = 6;
+
+}
+
+message TimeChangeEvent {
+    double where = 1;
+}
+
+message ReadyEvent {
+    bool client_ready = 1;
+}
+
+message GoEvent {
+    bool playback = 1;
+}
+
+message HelloEvent {
+	string id = 1;
+}
+
+message PingEvent {
+	uint64 nonce = 1;
+}
