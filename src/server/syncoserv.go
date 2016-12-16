@@ -79,7 +79,6 @@ func (c *client) setReady(ready bool) {
 				Playback: false,
 			},
 		})
-		unreadyAll()
 	} else if canStart() {
 		log.Println("Everyone is ready, starting")
 		broadcast("", &protocol.Event{ // send to everyone, do not skip sender
