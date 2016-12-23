@@ -108,8 +108,13 @@ func main() {
 		return
 	}
 
-	if cfg.Client.HelperDir == "" {
+	if cfg.Client.HelperDir <= "" {
 		cfg.Client.HelperDir, _ = filepath.Abs(filepath.Dir(os.Args[0]))
+	}
+	helperPath := path.Join(cfg.Client.HelperDir, "helper.lua")
+	if _, err := os.Stat(helperPath); os.IsNotExist(err) {
+		log.Printf("helper file (%v) not found", helperPath)
+		return
 	}
 
 	mplayerArgs := []string{

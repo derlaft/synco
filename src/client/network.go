@@ -52,43 +52,53 @@ func connect(addr, id string, handler handlerFunc, stahp stahpFunc) (*network, e
 func (n *network) doStreaming() {
 	for {
 		n.stream = nil
-		stream, err := n.client.Connect(context.Background())
+
+		err := n.doStreamingConn()
 		if err != nil {
-			log.Printf("Could not establish stream: %v", err)
-			continue
+			log.Println(err)
 		}
-		err = stream.Send(&protocol.Event{
-			Hello: &protocol.HelloEvent{
-				Id: n.id,
-			},
-		})
-		if err != nil {
-			log.Printf("Could welcome the stream: %v", err)
-			continue
-		}
-		n.stream = stream
-
-		for {
-			resp, err := stream.Recv()
-			if err != nil {
-				log.Println(err)
-				break
-			}
-
-			if resp.Ping != nil {
-				n.lastPong = time.Now()
-				continue
-			}
-
-			err = n.handler(resp)
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-
-		}
-
 	}
+}
+
+// inner loop in a separate func to ease ctx handling
+func (n *network) doStreamingConn() error {
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() //this should really disconnect on any errors
+
+	stream, err := n.client.Connect(ctx)
+	if err != nil {
+		return fmt.Errorf("Could not establish stream: %v", err)
+	}
+	err = stream.Send(&protocol.Event{
+		Hello: &protocol.HelloEvent{
+			Id: n.id,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("Could welcome the stream: %v", err)
+	}
+	n.stream = stream
+
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			return fmt.Errorf("End of stream: %v", err)
+		}
+
+		if resp.Ping != nil {
+			n.lastPong = time.Now()
+			continue
+		}
+
+		err = n.handler(resp)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+	}
+
+	return nil
 }
 
 func (n *network) send(msg *protocol.Event) {
@@ -113,21 +123,23 @@ func (n *network) healthPings() {
 				Nonce: uint64(rand.Int63()),
 			},
 		})
-		go func() {
-			time.Sleep(time.Second)
-			if time.Since(n.lastPong) > time.Second {
-				n.stahp()
-				if n.stream != nil {
-					n.stream.Send(&protocol.Event{
-						Reason: fmt.Sprintf("client %v did not recieve pongs for a second"),
-						Ready: &protocol.ReadyEvent{
-							ClientReady: false,
-						},
-					})
-				}
-			}
+		go n.checkPing()
+	}
+}
 
-		}()
+// check if pings are OK after timeout
+func (n *network) checkPing() {
+	time.Sleep(time.Second)
+	if time.Since(n.lastPong) > time.Second {
+		n.stahp()
+		if n.stream != nil {
+			n.stream.Send(&protocol.Event{
+				Reason: fmt.Sprintf("client %v did not recieve pongs for a second"),
+				Ready: &protocol.ReadyEvent{
+					ClientReady: false,
+				},
+			})
+		}
 	}
 }
 

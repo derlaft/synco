@@ -16,6 +16,7 @@ type client struct {
 	id       string
 	stream   protocol.Synco_ConnectServer
 	ready    bool
+	waste    bool
 	done     chan interface{}
 	lastPing time.Time
 }
@@ -28,8 +29,9 @@ var (
 func addClient(c *client) error {
 	_, ok := clients[c.id]
 	if ok {
-		return fmt.Errorf("client %v already exists", c.id)
+		delClient(c.id)
 	}
+
 	log.Printf("Client %v registered", c.id)
 	clientsLock.Lock()
 	clients[c.id] = c
@@ -40,6 +42,7 @@ func addClient(c *client) error {
 func delClient(id string) {
 	log.Printf("Client %v deregistered", id)
 	clientsLock.Lock()
+	clients[id].waste = true
 	delete(clients, id)
 	clientsLock.Unlock()
 }
@@ -158,6 +161,11 @@ func (s *syncoServer) Connect(stream protocol.Synco_ConnectServer) error {
 		resp, err := stream.Recv()
 		if err != nil {
 			log.Println(err)
+			break
+		}
+
+		if this.waste {
+			log.Println("Client seems to reconnect; removing the old one")
 			break
 		}
 
