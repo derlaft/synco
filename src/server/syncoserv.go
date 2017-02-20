@@ -82,6 +82,14 @@ func (c *client) setReady(ready bool) {
 				Playback: false,
 			},
 		})
+
+		// not forget to mark them non-ready locally
+		clientsLock.Lock()
+		for _, cl := range clients {
+			cl.ready = false
+		}
+		clientsLock.Unlock()
+
 	} else if canStart() {
 		log.Println("Everyone is ready, starting")
 		broadcast("", &protocol.Event{ // send to everyone, do not skip sender
