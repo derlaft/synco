@@ -5,6 +5,7 @@ import (
 	"google.golang.org/grpc"
 	"log"
 	"net"
+	"os"
 	"protocol"
 	"sync"
 	"time"
@@ -126,7 +127,12 @@ func unreadyAll() {
 }
 
 func main() {
-	lis, err := net.Listen("tcp", "localhost:4042")
+
+	if len(os.Args) < 2 {
+		log.Fatal(fmt.Errorf("Usage: %v listenaddr:port", os.Args[0]))
+	}
+
+	lis, err := net.Listen("tcp", os.Args[1])
 	if err != nil {
 		log.Fatal(err)
 	}
