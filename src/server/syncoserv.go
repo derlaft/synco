@@ -163,7 +163,7 @@ func (s *syncoServer) Connect(stream protocol.Synco_ConnectServer) error {
 			break
 		}
 
-		if this.waste {
+		if this != nil && this.waste {
 			log.Println("Client seems to reconnect; removing the old one")
 			break
 		}
