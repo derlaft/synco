@@ -76,22 +76,7 @@ func (c *client) setReady(ready bool) {
 		log.Printf("client %v is now not ready", c.id)
 	}
 
-	if !ready {
-		broadcast(c.id, &protocol.Event{
-			Reason: fmt.Sprintf("client %v is no more ready", c.id),
-			Go: &protocol.GoEvent{
-				Playback: false,
-			},
-		})
-
-		// not forget to mark them non-ready locally
-		clientsLock.Lock()
-		for _, cl := range clients {
-			cl.ready = false
-		}
-		clientsLock.Unlock()
-
-	} else if canStart() {
+	if canStart() {
 		log.Println("Everyone is ready, starting")
 		broadcast("", &protocol.Event{ // send to everyone, do not skip sender
 			Reason: fmt.Sprintf("everyone is ready", c.id),
