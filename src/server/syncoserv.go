@@ -200,11 +200,7 @@ func (s *syncoServer) Connect(stream protocol.Synco_ConnectServer) error {
 
 		case resp.Ping != nil: // ping message
 			this.lastPing = time.Now()
-			err := stream.Send(resp)
-			if err != nil {
-				log.Printf("Could not send pong: %v", err)
-				break
-			}
+			this.send(resp)
 		default:
 			log.Printf("Unknown message type (%#v)", resp)
 		}
