@@ -49,6 +49,10 @@ function set_seto(value)
   stahp = not (ready and seto)
   mp.set_property_bool("pause", stahp)
 
+  if not seto then
+    set_ready(false)
+  end
+
   if not stahp then
     mp.osd_message("go")
   end
