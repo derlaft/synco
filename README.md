@@ -4,7 +4,7 @@ Watch anime (or anything else!) together with friends over network!
 
 Usage:
 
-1. Download sources and build (you will need mpv (mplayer is fine too, but why would you still use that in 2017?), go, and [gb](https://getgb.io/):
+1. Download sources and build. You will need mpv (mplayer is fine too, but why would you still use that in 2017?), go, and [gb](https://getgb.io/).
 
 ```bash
 git clone https://github.com/derlaft/synco.git
@@ -12,13 +12,13 @@ cd synco
 gb build
 ```
 
-2. Run server
+2. Run server.
 
 ```bash
 ./bin/server 0.0.0.0:4042
 ```
 
-3. Setup client. Place this to ``~/.config/synco``:
+3. Setup client. Place this to ``~/.config/synco``.
 
 ```
 [Client]
