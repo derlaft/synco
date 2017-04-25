@@ -68,6 +68,10 @@ func broadcast(origin string, event *protocol.Event) {
 }
 
 func (c *client) setReady(ready bool) {
+	if c.ready == ready {
+		return
+	}
+
 	c.ready = ready
 
 	if ready {
