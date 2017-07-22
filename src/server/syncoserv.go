@@ -27,6 +27,10 @@ var (
 	clientsLock = sync.Mutex{}
 )
 
+const (
+	pingTimeoutTime = time.Second * 5
+)
+
 func addClient(c *client) error {
 	_, ok := clients[c.id]
 	if ok {
@@ -149,10 +153,11 @@ func main() {
 }
 
 func (c *client) healthPings() {
+	var shitHappened = false
 	for {
 		select {
 		case <-time.Tick(time.Millisecond * 500):
-			if time.Since(c.lastPing) > time.Second {
+			if time.Since(c.lastPing) > pingTimeoutTime && !shitHappened {
 				broadcast("", &protocol.Event{
 					Reason: fmt.Sprintf("client %v did not respond ping in time", c.id),
 					Go: &protocol.GoEvent{
@@ -160,6 +165,9 @@ func (c *client) healthPings() {
 					},
 				})
 				unreadyAll()
+				shitHappened = true
+			} else if time.Since(c.lastPing) < pingTimeoutTime && shitHappened {
+				shitHappened = false
 			}
 		case <-c.done:
 			return

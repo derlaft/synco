@@ -48,6 +48,7 @@ func (m *mpv) wait() error {
 }
 
 func (m *mpv) execCmd(cmd string) {
+	log.Printf("executing mpv command: %v", cmd)
 	m.sendLock.Lock()
 	_, err := fmt.Fprintf(m.out, "%s\n", cmd)
 	if err != nil {

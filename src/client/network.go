@@ -86,6 +86,8 @@ func (n *network) doStreamingConn() error {
 			return fmt.Errorf("End of stream: %v", err)
 		}
 
+		log.Printf("got net msg: %+v", resp)
+
 		if resp.Ping != nil {
 			n.lastPong = time.Now()
 			continue
@@ -130,7 +132,7 @@ func (n *network) healthPings() {
 // check if pings are OK after timeout
 func (n *network) checkPing() {
 	time.Sleep(time.Second)
-	if time.Since(n.lastPong) > time.Second {
+	if time.Since(n.lastPong) > time.Second*10 {
 		n.stahp()
 		if n.stream != nil {
 			n.stream.Send(&protocol.Event{
