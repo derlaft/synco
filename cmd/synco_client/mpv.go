@@ -136,11 +136,7 @@ func (s *synco) eventLoop(ctx context.Context) error {
 			s.pauseChanged(false)
 
 		case resp.Event == "playback-restart":
-			if s.ignoreSeek > 0 {
-				s.ignoreSeek--
-			} else {
-				s.seekReceived = true
-			}
+			s.seekReceived = true
 
 		// ready button handling
 		case resp.Event == "client-message":

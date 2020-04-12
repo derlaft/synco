@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/derlaft/synco/protocol"
 )
@@ -63,6 +64,15 @@ func main() {
 }
 
 func (s *server) acceptLoop() error {
+
+	go func() {
+
+		for range time.Tick(time.Second) {
+			s.onPing()
+		}
+
+	}()
+
 	for {
 
 		// wait for accept
@@ -243,7 +253,6 @@ func (s *server) handleClient(conn net.Conn) error {
 			s.onReadyChange()
 		case protocol.ClientPositionMessage:
 			c.pos = msg.Position
-			s.onPing()
 		case protocol.ClientSeekMessage:
 			log.Printf("Client %v seeks", c.id)
 			c.pos = msg.Position

@@ -18,7 +18,6 @@ type synco struct {
 	clientPaused   bool
 	clientReady    bool
 	serverReady    bool
-	ignoreSeek     int
 	seekReceived   bool
 	position       float64
 	serverAddr     string
@@ -200,7 +199,6 @@ func (s *synco) onServerReady(ready bool) {
 }
 
 func (s *synco) remoteSeek(pos float64) {
-	//s.ignoreSeek++
 	if math.Abs(s.position-pos) < 0.5 {
 		return
 	}
