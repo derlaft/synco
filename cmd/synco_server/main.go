@@ -19,6 +19,7 @@ type server struct {
 	ready    bool
 	sync.RWMutex
 	maxDesync float64
+	lastSeek  time.Time
 }
 
 type client struct {
@@ -28,6 +29,11 @@ type client struct {
 	ready  bool
 	pos    float64
 }
+
+var (
+	desyncA = time.Millisecond * 100
+	desyncT = time.Second
+)
 
 func main() {
 
@@ -67,7 +73,12 @@ func (s *server) acceptLoop() error {
 
 	go func() {
 
-		for range time.Tick(time.Second) {
+		for range time.Tick(desyncT) {
+			s.RLock()
+			if time.Since(s.lastSeek) < desyncA {
+				continue
+			}
+			s.RUnlock()
 			s.onPing()
 		}
 
@@ -134,6 +145,11 @@ func (s *server) onReadyChange() {
 }
 
 func (s *server) onSeek(from string, to float64) {
+
+	s.Lock()
+	s.lastSeek = time.Now()
+	s.Unlock()
+
 	s.broadcast(from, protocol.Message{
 		ID:       protocol.ServerSeekMessage,
 		Position: to,
