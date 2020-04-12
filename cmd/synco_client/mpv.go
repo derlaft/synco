@@ -135,7 +135,7 @@ func (s *synco) eventLoop(ctx context.Context) error {
 		case resp.Event == "unpause":
 			s.pauseChanged(false)
 
-		case resp.Event == "seek":
+		case resp.Event == "playback-restart":
 			if s.ignoreSeek > 0 {
 				s.ignoreSeek--
 			} else {

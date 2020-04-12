@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path"
 	"sync"
@@ -129,6 +130,10 @@ func (s *synco) pauseChanged(paused bool) {
 		s.serverCommands <- &protocol.Message{
 			ID: protocol.ClientUnreadyMessage,
 		}
+		s.serverCommands <- &protocol.Message{
+			ID:       protocol.ClientSeekMessage,
+			Position: s.position,
+		}
 
 	}
 
@@ -195,6 +200,9 @@ func (s *synco) onServerReady(ready bool) {
 }
 
 func (s *synco) remoteSeek(pos float64) {
-	s.ignoreSeek++
+	//s.ignoreSeek++
+	if math.Abs(s.position-pos) < 0.5 {
+		return
+	}
 	s.mpvCommands <- fmt.Sprintf(seekCommand, pos)
 }
