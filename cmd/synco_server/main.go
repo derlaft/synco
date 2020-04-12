@@ -281,5 +281,13 @@ func (s *server) handleClient(conn net.Conn) error {
 
 	}
 
+	// clean-up on termination
+	s.Lock()
+	// it could be already replaced with something new
+	if s.clients[c.id] == &c {
+		delete(s.clients, c.id)
+	}
+	s.Unlock()
+
 	return nil
 }
