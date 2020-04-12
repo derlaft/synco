@@ -74,11 +74,15 @@ func (s *server) acceptLoop() error {
 	go func() {
 
 		for range time.Tick(desyncT) {
+
 			s.RLock()
-			if time.Since(s.lastSeek) < desyncA {
+			sinceLastSeek := time.Since(s.lastSeek)
+			s.RUnlock()
+
+			if sinceLastSeek < desyncA {
 				continue
 			}
-			s.RUnlock()
+
 			s.onPing()
 		}
 
