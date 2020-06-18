@@ -4,32 +4,31 @@ Watch anime (or anything else!) together with friends over network!
 
 Usage:
 
-1. Setup go and `GOPATH` and probably `GOBIN` environment variables. You will need mpv (mplayer is fine too, but why would you still use that in 2017?).
+1. Install `go`, setup `GOBIN` environment variable. You will need mpv (mplayer is fine too, but why would you still use that in 2017?). Alternatively, you could use [gobin](https://github.com/myitcv/gobin) to install the package.
 
 ```bash
-go get github.com/derlaft/synco/synco_server
-go get github.com/derlaft/synco/synco_client
+go get github.com/derlaft/synco/cmd/synco_server
+go get github.com/derlaft/synco/cmd/synco_client
 ```
 
 2. Run server.
 
 ```bash
-synco_server 0.0.0.0:4042
+synco_server -listen 0.0.0.0:4042
 ```
 
-3. Setup client. Place this to ``~/.config/synco``.
+3. Setup client. Configuration is done via environment variables:
+
+* `SYNCO_ID` is a unique client ID
+* `SYNCO_SERVER` is server addr
 
 ```
-[Client]
-ID = der # your unique ID
-ConnectTo = serveraddr:4042
-HelperDir = /home/user/synco/src/client/ # this is where helper.lua is located
-```
-
-4. Run it!
-
-```bash
-synco_client ~/Downloads/My-Favourite-Animu/Season1/Episodo1.mkv
+SYNCO_ID=der SYNCO_SERVER=example.com:4042 synco_client filename.mpv
 ```
 
 5. Press F1 to change your readiness. Once everybody is ready playback will be started.
+
+
+# Known issues
+
+* On certain files it is not possible to scroll precisely. Currently this files make synco a little bit crazy.
