@@ -31,4 +31,4 @@ SYNCO_ID=der SYNCO_SERVER=example.com:4042 synco_client filename.mpv
 
 # Known issues
 
-* On certain files it is not possible to scroll precisely. Currently this files make synco a little bit crazy.
+* On certain files it is not possible to scroll precisely. Currently such files make synco a little bit crazy and might cause playback loops.
