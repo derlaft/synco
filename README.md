@@ -4,7 +4,7 @@ Watch anime (or anything else!) together with friends over network!
 
 Usage:
 
-1. Install `go`, setup `GOBIN` environment variable. You will need mpv (mplayer is fine too, but why would you still use that in 2017?). Alternatively, you could use [gobin](https://github.com/myitcv/gobin) to install the package.
+1. Install `go`, setup `GOBIN` environment variable. You will need mpv. Alternatively, you could use [gobin](https://github.com/myitcv/gobin) to install the package.
 
 ```bash
 go get github.com/derlaft/synco/cmd/synco_server
