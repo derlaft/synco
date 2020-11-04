@@ -44,7 +44,7 @@ func main() {
 
 	log.Printf("Starting server on %v", *listenAddr)
 
-	l, err := net.Listen("tcp4", *listenAddr)
+	l, err := net.Listen("tcp", *listenAddr)
 	if err != nil {
 		log.Fatalf("Error while binding to %v: %v", *listenAddr, err)
 	}
