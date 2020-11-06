@@ -31,6 +31,15 @@ func (s *synco) dialServer(ctx context.Context) error {
 
 		encoder := json.NewEncoder(rpc)
 
+		err := encoder.Encode(&protocol.Message{
+			ID:     protocol.HelloMessage,
+			UserID: s.clientID,
+		})
+		if err != nil {
+			log.Printf("Error while writing hello command: %v", err)
+			return
+		}
+
 		for command := range s.serverCommands {
 			if command == nil {
 				log.Printf("Client command writing terminating")
@@ -44,11 +53,6 @@ func (s *synco) dialServer(ctx context.Context) error {
 			}
 		}
 	}()
-
-	s.serverCommands <- &protocol.Message{
-		ID:     protocol.HelloMessage,
-		UserID: s.clientID,
-	}
 
 	decoder := json.NewDecoder(rpc)
 	for decoder.More() {
