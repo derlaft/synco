@@ -2,3 +2,5 @@
 pkg
 vendor/pkg
 /deploy.sh
+*.mp4
+*.mkv

@@ -169,6 +169,21 @@ func (s *synco) eventLoop(ctx context.Context) error {
 
 			s.positionChanged(pos)
 
+		// speed tracking
+		case resp.Event == "property-change" && resp.Name == "speed":
+
+			if resp.Data == nil {
+				// happens on startup
+				continue
+			}
+
+			pos, ok := resp.Data.(float64)
+			if !ok {
+				return fmt.Errorf("IPC response data (%T) is not str: %+v", resp.Data, resp)
+			}
+
+			s.speedChanged(pos)
+
 		default:
 			log.Printf("new unhandled message: %+v", resp)
 		}

@@ -20,6 +20,7 @@ type synco struct {
 	serverReady    bool
 	seekReceived   bool
 	position       float64
+	speed          float64
 	serverAddr     string
 	mpvCommands    chan string
 	serverCommands chan *protocol.Message
@@ -189,6 +190,18 @@ func (s *synco) positionChanged(pos float64) {
 	s.position = pos
 }
 
+func (s *synco) speedChanged(speed float64) {
+
+	log.Printf("Local speed change to %v", speed)
+
+	s.speed = speed
+	s.serverCommands <- &protocol.Message{
+		ID:    protocol.ClientSpeedMessage,
+		Speed: speed,
+	}
+
+}
+
 func (s *synco) onServerReady(ready bool) {
 	s.serverReady = ready
 	if ready {
@@ -203,4 +216,12 @@ func (s *synco) remoteSeek(pos float64) {
 		return
 	}
 	s.mpvCommands <- fmt.Sprintf(seekCommand, pos)
+}
+
+func (s *synco) remoteSpeed(speed float64) {
+	if math.Abs(s.speed-speed) < 0.01 {
+		return
+	}
+	s.mpvCommands <- fmt.Sprintf(speedCommand, speed)
+	s.mpvCommands <- fmt.Sprintf(speedChanged, speed)
 }

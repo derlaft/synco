@@ -16,6 +16,9 @@ const (
 	// ServerPositionMessage means that one of the clients scrolled the video
 	// it means all the clients should change position to given one
 	ServerSeekMessage = ">>"
+	// ServerSpeedMessage means hat one of the clients changed the playback speed
+	// it means all the clients should change the speed to given one
+	ServerSpeedMessage = ">>>"
 )
 
 // Various possible message types sent by client
@@ -29,6 +32,8 @@ const (
 	ClientPositionMessage = "??"
 	// ClientSeekMessage indicates that clients want to force-change position
 	ClientSeekMessage = ">>"
+	// ClientSpeedMessage means hat one of the clients wants to change playback speed
+	ClientSpeedMessage = ">>>"
 )
 
 // Message that is being sent over network
@@ -36,4 +41,5 @@ type Message struct {
 	ID       MessageType `json:"t"`
 	UserID   string      `json:"u,omitempty"`
 	Position float64     `json:"p,omitempty"`
+	Speed    float64     `json:"s,omitempty"`
 }

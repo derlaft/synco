@@ -67,6 +67,8 @@ func (s *synco) dialServer(ctx context.Context) error {
 			s.onServerReady(resp.ID == protocol.ServerReadyMessage)
 		case protocol.ServerSeekMessage:
 			s.remoteSeek(resp.Position)
+		case protocol.ServerSpeedMessage:
+			s.remoteSpeed(resp.Speed)
 		default:
 			log.Printf("Warning: unknown server msg type: %+v", resp)
 		}

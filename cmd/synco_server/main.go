@@ -20,6 +20,7 @@ type server struct {
 	sync.RWMutex
 	maxDesync float64
 	lastSeek  time.Time
+	speed     float64
 }
 
 type client struct {
@@ -160,6 +161,18 @@ func (s *server) onSeek(from string, to float64) {
 	})
 }
 
+func (s *server) onSpeed(from string, speed float64) {
+
+	s.Lock()
+	s.speed = speed
+	s.Unlock()
+
+	s.broadcast(from, protocol.Message{
+		ID:    protocol.ServerSpeedMessage,
+		Speed: speed,
+	})
+}
+
 func (s *server) onPing() {
 	s.RLock()
 	defer s.RUnlock()
@@ -277,6 +290,9 @@ func (s *server) handleClient(conn net.Conn) error {
 			log.Printf("Client %v seeks", c.id)
 			c.pos = msg.Position
 			s.onSeek(c.id, c.pos)
+		case protocol.ClientSpeedMessage:
+			log.Printf("Client %v changes speed", c.id)
+			s.onSpeed(c.id, msg.Speed)
 		}
 
 	}
