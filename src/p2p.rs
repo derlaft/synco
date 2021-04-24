@@ -124,6 +124,9 @@ pub async fn join(
     }
 
     swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+
+    // introduce lots of network issues
+    // but make revan satisfied
     swarm.listen_on("/ip6/::/tcp/0".parse()?)?;
 
     loop {
