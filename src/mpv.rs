@@ -5,6 +5,9 @@ use async_signals::Signals;
 use futures_lite::future::or;
 use futures_lite::io::{AsyncBufReadExt, BufReader, ReadHalf, WriteHalf};
 use futures_lite::prelude::*;
+use serde::{self, Deserialize, Serialize};
+use serde_json::json;
+use serde_tuple::Serialize_tuple;
 use smol::net::unix::UnixStream;
 use smol::stream::StreamExt;
 use smol::Timer;
@@ -23,10 +26,22 @@ quick_error! {
         MpvStartupError(err: MpvStartupError) {
             from()
         }
-        SendError(err: SendError<String>) {
+        SendError(err: SendError<Event>) {
             from()
         }
+        JSONError(err: serde_json::Error) {
+            from()
+        }
+        EventParsingError(err: EventParsingError) {
+            from()
+        }
+
     }
+}
+
+#[derive(Debug)]
+pub struct EventParsingError {
+    reason: String,
 }
 
 #[derive(Debug)]
@@ -40,11 +55,225 @@ pub struct MpvStartupError {
     reason: String,
 }
 
-pub type Message = String;
+#[derive(Debug, Serialize_tuple)]
+pub struct Request {
+    command: RequestType,
+    v1: serde_json::Value,
+    v2: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub enum RequestType {
+    #[serde(rename = "keybind")]
+    Keybind,
+    #[serde(rename = "observe_property")]
+    ObserveProperty,
+    #[serde(rename = "set_property")]
+    SetProperty,
+    #[serde(rename = "osd-msg")]
+    OSDMsg,
+}
+
+#[derive(Debug, Serialize)]
+pub enum Property {
+    #[serde(rename = "time-pos")]
+    TimePos,
+    #[serde(rename = "speed")]
+    Speed,
+    #[serde(rename = "seeking")]
+    Seeking,
+    #[serde(rename = "pause")]
+    Pause,
+}
+
+#[derive(Debug)]
+pub enum BoolProperty {
+    Speed,
+    Seeking,
+}
+
+#[derive(Debug)]
+pub enum FloatProperty {
+    TimePos,
+    Speed,
+}
+
+#[derive(Debug, Deserialize)]
+struct EventRaw {
+    request_id: Option<i32>,
+    error: Option<String>,
+    event: Option<String>,
+    name: Option<String>,
+    data: Option<serde_json::Value>,
+    args: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug)]
+pub enum Event {
+    SuccessResponse { request_id: i32 },
+    ErrorResponse { request_id: i32, error: String },
+    Event { event: String },
+    ClientMessage { id: String },
+    FloatPropertyChange { property: FloatProperty, value: f64 },
+}
+
+impl EventRaw {
+    fn take_data_f64(&self) -> Result<f64, MpvError> {
+        if let Some(ref value) = self.data {
+            match value {
+                serde_json::Value::Number(n) if n.is_f64() => Ok(n.as_f64().unwrap_or_default()),
+                _ => Err(EventParsingError {
+                    reason: "Expected .data to be float, got something else".to_string(),
+                }
+                .into()),
+            }
+        } else {
+            Err(EventParsingError {
+                reason: "Expected .data, got nothing".to_string(),
+            }
+            .into())
+        }
+    }
+
+    fn take_arg_str(&self) -> Result<String, MpvError> {
+        if let Some(ref args) = self.args {
+            if let Some(ref el) = args.first() {
+                match el {
+                    serde_json::Value::String(s) => Ok(s.clone()),
+                    _ => Err(EventParsingError {
+                        reason: "Expected .args[0] to be string, got something else".to_string(),
+                    }
+                    .into()),
+                }
+            } else {
+                Err(EventParsingError {
+                    reason: format!("Expected len(.args), got {}", args.len()).to_string(),
+                }
+                .into())
+            }
+        } else {
+            Err(EventParsingError {
+                reason: "Expected .args, got nothing".to_string(),
+            }
+            .into())
+        }
+    }
+
+    fn parse(&self) -> Result<Option<Event>, MpvError> {
+        let parsed_event = if let Some(ref error) = self.error {
+            // branch one:
+            Some(match error.as_str() {
+                // if error field is set, it's either success
+                "success" => Event::SuccessResponse {
+                    request_id: self.request_id.unwrap_or_default(),
+                },
+                // or an actual error
+                _ => Event::ErrorResponse {
+                    request_id: self.request_id.unwrap_or_default(),
+                    error: (*error).clone(),
+                },
+            })
+        } else if let Some(ref event_type) = self.event {
+            // branch two:
+            match event_type.as_str() {
+                // simple events which contain no properties
+                "pause" | "unpause" | "playback-restart" => Some(Event::Event {
+                    event: (*event_type).clone(),
+                }),
+                // client message
+                "client-message" => Some(Event::ClientMessage {
+                    id: self.take_arg_str()?,
+                }),
+                // float properties
+                "property-change" => {
+                    if let Some(ref name) = self.name {
+                        match name.as_str() {
+                            "time-pos" => Some(Event::FloatPropertyChange {
+                                property: FloatProperty::TimePos,
+                                value: self.take_data_f64()?,
+                            }),
+                            "speed" => Some(Event::FloatPropertyChange {
+                                property: FloatProperty::Speed,
+                                value: self.take_data_f64()?,
+                            }),
+                            // TODO: seeking bool
+                            _ => None,
+                        }
+                    } else {
+                        // other properties are ignored for now
+                        None
+                    }
+                }
+                // ignore all others for now
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        Ok(parsed_event)
+    }
+}
+
+impl Request {
+    pub fn set_pause(val: bool) -> Request {
+        Request {
+            command: RequestType::SetProperty,
+            v1: json!(Property::Pause),
+            v2: json!(val),
+        }
+    }
+
+    pub fn seek(val: f64) -> Request {
+        Request {
+            command: RequestType::SetProperty,
+            v1: json!(Property::TimePos),
+            v2: json!(val),
+        }
+    }
+
+    pub fn speed(val: f64) -> Request {
+        Request {
+            command: RequestType::SetProperty,
+            v1: json!(Property::Speed),
+            v2: json!(val),
+        }
+    }
+
+    pub fn observe_property(property: Property) -> Request {
+        Request {
+            command: RequestType::ObserveProperty,
+            v1: json!(1),
+            v2: json!(property),
+        }
+    }
+
+    pub fn display_message(msg: &str) -> Request {
+        Request {
+            command: RequestType::OSDMsg,
+            v1: json!("show-text"),
+            v2: json!(msg),
+        }
+    }
+
+    pub fn keybind(key: &str, command: &str) -> Request {
+        Request {
+            command: RequestType::Keybind,
+            v1: json!(key),
+            v2: json!(command),
+        }
+    }
+
+    fn get_value(&self) -> serde_json::Value {
+        json!({
+            "command": json!(self),
+        })
+    }
+}
 
 pub async fn start(
-    msg_receive: &mut Receiver<Message>,
-    msg_send: Sender<Message>,
+    msg_receive: &mut Receiver<Request>,
+    msg_send: Sender<Event>,
 ) -> Result<(), MpvError> {
     let socket_path = {
         let tmp_dir = util::expand("$XDG_RUNTIME_DIR").unwrap_or("/tmp".to_string());
@@ -98,8 +327,8 @@ const CHECK_SOCKET_ATTEMPTS: i32 = 10;
 
 async fn synco_loop(
     socket_path: &PathBuf,
-    msg_receive: &mut Receiver<Message>,
-    msg_send: Sender<Message>,
+    msg_receive: &mut Receiver<Request>,
+    msg_send: Sender<Event>,
 ) -> Result<(), MpvError> {
     // first: waiting for socket
     for _ in 1..CHECK_SOCKET_ATTEMPTS {
@@ -128,10 +357,7 @@ async fn synco_loop(
     .await
 }
 
-async fn read_loop(
-    reader: ReadHalf<UnixStream>,
-    msg_send: Sender<Message>,
-) -> Result<(), MpvError> {
+async fn read_loop(reader: ReadHalf<UnixStream>, msg_send: Sender<Event>) -> Result<(), MpvError> {
     let reader = BufReader::new(reader);
 
     // just read mpv commands
@@ -139,7 +365,12 @@ async fn read_loop(
     while let Some(line) = lines.next().await {
         let line = line?;
         println!("mpv got line: {}", line);
-        msg_send.send(line).await?;
+        let event: EventRaw = serde_json::from_str(&line)?;
+
+        // some events may be skipped for now
+        if let Some(parsed_event) = event.parse()? {
+            msg_send.send(parsed_event).await?;
+        }
     }
 
     Ok(())
@@ -147,11 +378,17 @@ async fn read_loop(
 
 async fn write_loop(
     writer: &mut WriteHalf<UnixStream>,
-    msg_receive: &mut Receiver<Message>,
+    msg_receive: &mut Receiver<Request>,
 ) -> Result<(), MpvError> {
     // just write mpv commands
     while let Some(msg) = msg_receive.next().await {
-        writer.write(msg.as_bytes()).await?;
+        let mut to_write = serde_json::to_vec(&msg.get_value())?;
+        to_write.push(b'\n');
+        println!(
+            "mpv send line: {}",
+            String::from_utf8(to_write.clone()).unwrap()
+        );
+        writer.write(&to_write).await?;
     }
 
     Ok(())
