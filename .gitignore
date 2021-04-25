@@ -4,3 +4,4 @@ vendor/pkg
 /deploy.sh
 *.mp4
 *.mkv
+*.config

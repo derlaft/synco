@@ -2649,6 +2649,7 @@ name = "synco_p2p"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "async-process",
  "async-signals",
  "base64 0.13.0",
  "defer",

@@ -4,7 +4,11 @@ extern crate quick_error;
 
 mod config;
 mod logic;
+mod mpv;
 mod p2p;
+mod util;
+
+use crate::logic::logic_controller;
 use crate::p2p::join;
 use async_channel;
 use async_signals::Signals;
@@ -16,27 +20,43 @@ const CHANNEL_SIZE: usize = 256;
 fn main() {
     let room_id = "@test";
 
-    let (tap_send, _tap_receive) = async_channel::bounded(CHANNEL_SIZE);
-    let (control_send, control_receive) = async_channel::bounded(CHANNEL_SIZE);
+    let (from_network_send, mut from_network_receive) = async_channel::bounded(CHANNEL_SIZE);
+    let (to_network_send, mut to_network_receive) = async_channel::bounded(CHANNEL_SIZE);
+
+    let (to_mpv_send, mut to_mpv_receive) = async_channel::bounded(CHANNEL_SIZE);
+    let (from_mpv_send, mut from_mpv_receive) = async_channel::bounded(CHANNEL_SIZE);
 
     let config = config::load().unwrap();
-    let keypair = config.get_keypair().unwrap();
+    let keypair = {
+        let keypair = config.get_keypair().unwrap();
+        Keypair::Ed25519(keypair)
+    };
 
-    smol::spawn(async move {
-        let mut signals = Signals::new(vec![libc::SIGINT]).unwrap();
-        signals.next().await;
-
-        control_send.close();
-    })
-    .detach();
-
-    smol::block_on(async {
-        // control_send.send(ControlMessage::Stop).await.unwrap();
-
-        let keypair = Keypair::Ed25519(keypair);
-
-        join(keypair, room_id, control_receive, tap_send)
-            .await
-            .unwrap();
-    })
+    smol::block_on(smol::future::zip(
+        // mpv worker
+        async {
+            mpv::start(&mut to_mpv_receive, from_mpv_send)
+                .await
+                .unwrap_or_else(move |e| println!("mpv worker error, shutting down: {}", e));
+        },
+        smol::future::zip(
+            // p2p worker
+            async {
+                join(keypair, room_id, to_network_receive, from_network_send)
+                    .await
+                    .unwrap_or_else(move |e| println!("p2p worker error, shutting down: {}", e));
+            },
+            // logic controller
+            async {
+                logic_controller(
+                    &mut from_mpv_receive,
+                    to_mpv_send,
+                    &mut from_network_receive,
+                    to_network_send,
+                )
+                .await
+                .unwrap_or_else(move |e| println!("logic worker error, shutting down: {}", e));
+            },
+        ),
+    ));
 }

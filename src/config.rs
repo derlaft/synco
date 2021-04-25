@@ -1,21 +1,16 @@
+use crate::util::{expand, ExpandError};
 use base64;
 use libp2p::identity::ed25519::Keypair;
 use libp2p::identity::error::DecodingError;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
-use shellexpand;
-use std::borrow::Borrow;
-use std::env::VarError;
 use std::fs::File;
-use std::io::prelude::*;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     private_key: String,
     pub id: String,
 }
-
-type ExpandError = shellexpand::LookupError<VarError>;
 
 quick_error! {
     #[derive(Debug)]
@@ -44,14 +39,16 @@ quick_error! {
     }
 }
 
-fn expand(input: &str) -> Result<String, ExpandError> {
-    let result = shellexpand::env(input)?;
-    let result: &str = result.borrow();
-    Ok(String::from(result))
+fn get_config_path() -> Result<String, LoadError> {
+    let mut file_path = std::env::var("SYNCO_CONFIG").unwrap_or_default();
+    if file_path.is_empty() {
+        file_path = expand("$HOME/.config/synco")?;
+    };
+    Ok(file_path)
 }
 
 pub fn load() -> Result<Config, LoadError> {
-    let file_path = expand("$HOME/.config/synco")?;
+    let file_path = get_config_path()?;
 
     let file = match File::open(file_path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return create(),
@@ -64,7 +61,7 @@ pub fn load() -> Result<Config, LoadError> {
 }
 
 pub fn create() -> Result<Config, LoadError> {
-    let file_path = expand("$HOME/.config/synco")?;
+    let file_path = get_config_path()?;
     let key = Keypair::generate().encode();
 
     println!("generated key length: {}", key.len());

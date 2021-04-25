@@ -10,6 +10,7 @@ use libp2p::{
 };
 
 use async_channel::{Receiver, Sender};
+use std::sync::Arc;
 
 // TODO: find a way to replace select! with something
 // that is provided by futures-lite
@@ -48,13 +49,14 @@ pub struct LogicError {
     reason: String,
 }
 
+pub type Peer = String;
 pub type Message = Vec<u8>;
 
 pub async fn join(
     id_keys: Keypair,
     topic_id: &str,
     control: Receiver<Message>,
-    tap: Sender<Message>,
+    tap: Sender<(Peer, Message)>,
 ) -> Result<(), JoinError> {
     env_logger::init();
 
@@ -71,6 +73,9 @@ pub async fn join(
     struct SyncoNetworkBehaviour {
         floodsub: Floodsub,
         mdns: Mdns,
+
+        #[behaviour(ignore)]
+        tap: Arc<Sender<(Peer, Message)>>,
     }
 
     impl NetworkBehaviourEventProcess<FloodsubEvent> for SyncoNetworkBehaviour {
@@ -82,6 +87,22 @@ pub async fn join(
                     String::from_utf8_lossy(&message.data),
                     message.source
                 );
+
+                {
+                    // I wonder how ugly is too much ugly
+                    let tap = self.tap.clone();
+                    smol::spawn(async move {
+                        tap.send((message.source.to_string(), message.data))
+                            .await
+                            .unwrap_or_else(|e| {
+                                eprintln!("p2p: error while sending message to tap: {}", e);
+                            })
+                    })
+                    // TODO: this is also not perfect
+                    // messages may appear out of order
+                    // (well, they may appear out of order for too many reasons...)
+                    .detach();
+                };
             }
         }
     }
@@ -111,13 +132,14 @@ pub async fn join(
         let mut behaviour = SyncoNetworkBehaviour {
             floodsub: Floodsub::new(peer_id.clone()),
             mdns,
+            tap: Arc::new(tap),
         };
 
         behaviour.floodsub.subscribe(floodsub_topic.clone());
         Swarm::new(transport, behaviour, peer_id)
     };
 
-    if let Some(to_dial) = std::env::args().nth(1) {
+    if let Some(to_dial) = std::env::args().nth(2) {
         let addr: Multiaddr = to_dial.parse()?;
         swarm.dial_addr(addr)?;
         println!("Dialed {:?}", to_dial)
