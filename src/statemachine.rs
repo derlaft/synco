@@ -6,6 +6,10 @@ use smol::lock::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+const SEEK_IGNORE_THRES: f64 = 0.2;
+
+const MAX_DESYNC: f64 = 2.0;
+
 pub struct StateMachine {
     to_mpv_send: Sender<mpv::Request>,
     to_network_send: Sender<proto::Action>,
@@ -20,6 +24,8 @@ struct State {
     speed: f64,
     ready: bool,
     paused: bool,
+    seeking: bool,
+    please_skip_sync_check: bool,
 }
 
 quick_error! {
@@ -94,8 +100,10 @@ impl StateMachine {
     }
 
     async fn stop_playback(&mut self, reason: &str) -> Result<(), Error> {
-        self.local_state.paused = true;
-        self.to_mpv_send.send(mpv::Request::set_pause(true)).await?;
+        if !self.local_state.paused {
+            self.local_state.paused = true;
+            self.to_mpv_send.send(mpv::Request::set_pause(true)).await?;
+        }
 
         if self.local_state.ready {
             self.stop_being_ready(reason).await?;
@@ -135,6 +143,26 @@ impl StateMachine {
                         pos: self.local_state.position,
                     })
                     .await?;
+
+                // check desync
+                if !self.local_state.paused
+                    && !self.local_state.seeking
+                    && !self.local_state.please_skip_sync_check
+                {
+                    let desync = self
+                        .global_state
+                        .values()
+                        .map(|v| (v.position - self.local_state.position).abs())
+                        .max_by(|a, b| a.partial_cmp(b).unwrap())
+                        .unwrap_or_default();
+
+                    if desync > MAX_DESYNC {
+                        self.stop_playback(format!("desync of {} detected", desync).as_str())
+                            .await?;
+                    }
+                }
+
+                self.local_state.please_skip_sync_check = false
             }
             Event::Mpv(event) => match event {
                 // handle command responses
@@ -143,8 +171,23 @@ impl StateMachine {
                     // TODO: maybe we want to abort here
                     eprintln!("mpv: command response error: {}", error);
                 }
+                mpv::Event::Seek => {
+                    // self.local_state.seeking = true,
+                }
                 mpv::Event::FloatPropertyChange { property, value } => match property {
-                    mpv::FloatProperty::TimePos => self.local_state.position = value,
+                    mpv::FloatProperty::TimePos => {
+                        self.local_state.position = value;
+                        if self.local_state.seeking {
+                            self.local_state.seeking = false;
+
+                            self.to_network_send
+                                .send(proto::Action::Seek {
+                                    pos: self.local_state.position,
+                                })
+                                .await?;
+                            self.local_state.please_skip_sync_check = false
+                        }
+                    }
                     mpv::FloatProperty::Speed => self.local_state.speed = value,
                 },
                 mpv::Event::ClientMessage { id } if id == "ready_pressed" => {
@@ -181,7 +224,7 @@ impl StateMachine {
                     }
                 }
                 mpv::Event::Event { event } if event == "playback-restart" => {
-                    // TODO
+                    self.local_state.seeking = true;
                 }
                 mpv::Event::Event { event } => {
                     eprintln!("warn: unknown event_type: {}", event);
@@ -201,7 +244,12 @@ impl StateMachine {
 
                 match event.action {
                     proto::Action::Hello => {
+                        node_state.ready = false;
+                        self.network_ready = false;
+
                         self.on_other_join(from.clone().as_str()).await?;
+                        self.stop_playback(format!("{} joined", from).as_str())
+                            .await?;
                     }
 
                     proto::Action::Ready => {
@@ -218,13 +266,6 @@ impl StateMachine {
                         self.network_ready = false;
                         node_state.ready = false;
 
-                        if self.local_state.ready {
-                            self.stop_being_ready(
-                                format!("{} is not ready", event.user_id).as_str(),
-                            )
-                            .await?;
-                        }
-
                         if !self.local_state.paused {
                             self.stop_playback(format!("{} is not ready", event.user_id).as_str())
                                 .await?;
@@ -233,7 +274,13 @@ impl StateMachine {
 
                     proto::Action::Seek { pos } => {
                         node_state.position = pos;
-                        // TODO: trigger seek separately?
+
+                        if (node_state.position - self.local_state.position).abs()
+                            > SEEK_IGNORE_THRES
+                        {
+                            self.to_mpv_send.send(mpv::Request::seek(pos)).await?;
+                            self.local_state.please_skip_sync_check = true;
+                        }
                     }
 
                     proto::Action::Position { pos } => {

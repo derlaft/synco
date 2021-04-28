@@ -116,6 +116,7 @@ pub enum Event {
     Event { event: String },
     ClientMessage { id: String },
     FloatPropertyChange { property: FloatProperty, value: f64 },
+    Seek,
 }
 
 impl EventRaw {
@@ -203,6 +204,7 @@ impl EventRaw {
                         None
                     }
                 }
+                "seek" => Some(Event::Seek),
                 // ignore all others for now
                 _ => {
                     eprintln!("warn: unsupported event_type {}", event_type);

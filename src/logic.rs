@@ -15,7 +15,7 @@ quick_error! {
         LogicError(err: LogicError) {
             from()
         }
-        SendNetworkMessageError(err: SendError<p2p::Message>) {
+        SendNetworkMessageError(err: SendError<proto::Action>) {
             from()
         }
         SendStateMachineError(err: SendError<statemachine::Event>) {
@@ -39,7 +39,6 @@ pub struct LogicError {
 }
 
 struct Controller {
-    user_id: String,
     to_mpv_send: Sender<mpv::Request>,
     to_network_send: Sender<p2p::Action>,
     to_logic_send: Sender<statemachine::Event>,
@@ -59,16 +58,13 @@ impl Controller {
             mpv::Request::keybind("F1", "script_message ready_pressed"),
             mpv::Request::observe_property(mpv::Property::TimePos),
             mpv::Request::observe_property(mpv::Property::Speed),
-            // mpv::Request::observe_property(mpv::Property::Seeking),
+            mpv::Request::observe_property(mpv::Property::Seeking),
         ];
 
         // send init commands
         for init_cmd in init_seq {
             self.to_mpv_send.send(init_cmd).await?;
         }
-
-        // announce we are now at network!
-        // self.clone().broadcast(proto::Action::Hello).await?;
 
         while let Some(event) = from_mpv_receive.next().await {
             eprintln!("Got parsed event: {:?}", event);
@@ -138,7 +134,6 @@ pub async fn logic_controller(
     let (to_logic_send, mut from_logic_receive) = async_channel::bounded(256);
 
     let c = Controller {
-        user_id,
         to_mpv_send,
         to_network_send,
         to_logic_send,
