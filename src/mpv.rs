@@ -2,6 +2,7 @@ use crate::util;
 use async_channel::{Receiver, SendError, Sender};
 use async_process::{Child, Command, Stdio};
 use async_signals::Signals;
+use defer::defer;
 use futures_lite::future::or;
 use futures_lite::io::{AsyncBufReadExt, BufReader, ReadHalf, WriteHalf};
 use futures_lite::prelude::*;
@@ -128,10 +129,8 @@ impl EventRaw {
                 .into()),
             }
         } else {
-            Err(EventParsingError {
-                reason: "Expected .data, got nothing".to_string(),
-            }
-            .into())
+            // default values are ommited :/
+            Ok(0.0)
         }
     }
 
@@ -205,7 +204,10 @@ impl EventRaw {
                     }
                 }
                 // ignore all others for now
-                _ => None,
+                _ => {
+                    eprintln!("warn: unsupported event_type {}", event_type);
+                    None
+                }
             }
         } else {
             None
@@ -288,6 +290,7 @@ pub async fn start(
             "--input-ipc-server={}",
             socket_path.to_str().unwrap()
         ))
+        // .arg("--msg-level=all=debug")
         .arg("--pause")
         .arg(std::env::args().nth(1).unwrap())
         .stdin(Stdio::inherit())
@@ -295,6 +298,10 @@ pub async fn start(
         .stderr(Stdio::inherit())
         .kill_on_drop(true)
         .spawn()?;
+
+    let _d = defer(|| {
+        std::fs::remove_file(socket_path.to_str().unwrap()).unwrap_or_default();
+    });
 
     smol::future::or(
         synco_loop(&socket_path, msg_receive, msg_send),
@@ -364,11 +371,11 @@ async fn read_loop(reader: ReadHalf<UnixStream>, msg_send: Sender<Event>) -> Res
     let mut lines = reader.lines();
     while let Some(line) = lines.next().await {
         let line = line?;
-        println!("mpv got line: {}", line);
         let event: EventRaw = serde_json::from_str(&line)?;
 
         // some events may be skipped for now
         if let Some(parsed_event) = event.parse()? {
+            eprintln!("---> mpv: {:?}", parsed_event);
             msg_send.send(parsed_event).await?;
         }
     }
@@ -384,8 +391,8 @@ async fn write_loop(
     while let Some(msg) = msg_receive.next().await {
         let mut to_write = serde_json::to_vec(&msg.get_value())?;
         to_write.push(b'\n');
-        println!(
-            "mpv send line: {}",
+        eprint!(
+            "debug: mpv send line: {}",
             String::from_utf8(to_write.clone()).unwrap()
         );
         writer.write(&to_write).await?;

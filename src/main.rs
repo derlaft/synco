@@ -6,6 +6,8 @@ mod config;
 mod logic;
 mod mpv;
 mod p2p;
+mod proto;
+mod statemachine;
 mod util;
 
 use crate::logic::logic_controller;
@@ -27,6 +29,7 @@ fn main() {
     let (from_mpv_send, mut from_mpv_receive) = async_channel::bounded(CHANNEL_SIZE);
 
     let config = config::load().unwrap();
+    let user_id = config.id.clone();
     let keypair = {
         let keypair = config.get_keypair().unwrap();
         Keypair::Ed25519(keypair)
@@ -42,13 +45,20 @@ fn main() {
         smol::future::zip(
             // p2p worker
             async {
-                join(keypair, room_id, to_network_receive, from_network_send)
-                    .await
-                    .unwrap_or_else(move |e| println!("p2p worker error, shutting down: {}", e));
+                join(
+                    keypair,
+                    user_id.clone().as_str(),
+                    room_id,
+                    to_network_receive,
+                    from_network_send,
+                )
+                .await
+                .unwrap_or_else(move |e| println!("p2p worker error, shutting down: {}", e));
             },
             // logic controller
             async {
                 logic_controller(
+                    config.id,
                     &mut from_mpv_receive,
                     to_mpv_send,
                     &mut from_network_receive,

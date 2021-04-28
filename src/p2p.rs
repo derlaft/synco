@@ -9,8 +9,12 @@ use libp2p::{
     Multiaddr, NetworkBehaviour, PeerId, Swarm, TransportError,
 };
 
+use crate::proto;
 use async_channel::{Receiver, Sender};
 use std::sync::Arc;
+
+pub type Message = proto::Message;
+pub type Action = proto::Action;
 
 // TODO: find a way to replace select! with something
 // that is provided by futures-lite
@@ -41,6 +45,9 @@ quick_error! {
         IOTransportError(err: TransportError<std::io::Error>) {
             from()
         }
+        JSONError(err: serde_json::Error) {
+            from()
+        }
     }
 }
 
@@ -50,12 +57,12 @@ pub struct LogicError {
 }
 
 pub type Peer = String;
-pub type Message = Vec<u8>;
 
 pub async fn join(
     id_keys: Keypair,
+    user_id: &str,
     topic_id: &str,
-    control: Receiver<Message>,
+    control: Receiver<Action>,
     tap: Sender<(Peer, Message)>,
 ) -> Result<(), JoinError> {
     env_logger::init();
@@ -92,7 +99,10 @@ pub async fn join(
                     // I wonder how ugly is too much ugly
                     let tap = self.tap.clone();
                     smol::spawn(async move {
-                        tap.send((message.source.to_string(), message.data))
+                        let msg: proto::Message =
+                            serde_json::from_slice(message.data.as_slice()).unwrap(); // TODO unwrap
+
+                        tap.send((message.source.to_string(), msg))
                             .await
                             .unwrap_or_else(|e| {
                                 eprintln!("p2p: error while sending message to tap: {}", e);
@@ -166,7 +176,12 @@ pub async fn join(
 
             select! {
                 msg = f1 => match msg {
-                    Ok(msg) => NextStep::Send(msg),
+                    Ok(msg) => {
+                        NextStep::Send(proto::Message{
+                            action: msg,
+                            user_id: user_id.clone().to_string(),
+                        })
+                    },
                     Err(err) => {
                         println!("Stopping due to control error: {:?}", err);
                         NextStep::Stop
@@ -188,10 +203,13 @@ pub async fn join(
                 return Ok(());
             }
             NextStep::Send(msg) => {
+                // TODO unwrap
+                let encoded = serde_json::to_vec(&msg).unwrap();
+
                 swarm
                     .behaviour_mut()
                     .floodsub
-                    .publish(floodsub_topic.clone(), msg);
+                    .publish(floodsub_topic.clone(), encoded);
             }
         };
     }
