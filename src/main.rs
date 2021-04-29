@@ -13,9 +13,8 @@ mod util;
 use crate::logic::logic_controller;
 use crate::p2p::join;
 use async_channel;
-use async_signals::Signals;
-use futures_lite::stream::StreamExt;
 use libp2p::identity::Keypair;
+use log::error;
 
 const CHANNEL_SIZE: usize = 256;
 
@@ -23,7 +22,7 @@ fn main() {
     let room_id = "@test";
 
     let (from_network_send, mut from_network_receive) = async_channel::bounded(CHANNEL_SIZE);
-    let (to_network_send, mut to_network_receive) = async_channel::bounded(CHANNEL_SIZE);
+    let (to_network_send, to_network_receive) = async_channel::bounded(CHANNEL_SIZE);
 
     let (to_mpv_send, mut to_mpv_receive) = async_channel::bounded(CHANNEL_SIZE);
     let (from_mpv_send, mut from_mpv_receive) = async_channel::bounded(CHANNEL_SIZE);
@@ -40,7 +39,7 @@ fn main() {
         async {
             mpv::start(&mut to_mpv_receive, from_mpv_send)
                 .await
-                .unwrap_or_else(move |e| println!("mpv worker error, shutting down: {}", e));
+                .unwrap_or_else(move |e| error!("mpv worker error, shutting down: {}", e));
         },
         smol::future::zip(
             // p2p worker
@@ -53,19 +52,18 @@ fn main() {
                     from_network_send,
                 )
                 .await
-                .unwrap_or_else(move |e| println!("p2p worker error, shutting down: {}", e));
+                .unwrap_or_else(move |e| error!("p2p worker error, shutting down: {}", e));
             },
             // logic controller
             async {
                 logic_controller(
-                    config.id,
                     &mut from_mpv_receive,
                     to_mpv_send,
                     &mut from_network_receive,
                     to_network_send,
                 )
                 .await
-                .unwrap_or_else(move |e| println!("logic worker error, shutting down: {}", e));
+                .unwrap_or_else(move |e| error!("logic worker error, shutting down: {}", e));
             },
         ),
     ));

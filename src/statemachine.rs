@@ -1,10 +1,9 @@
 use crate::mpv;
-use crate::p2p;
 use crate::proto;
-use async_channel::{Receiver, SendError, Sender};
-use smol::lock::Mutex;
+use async_channel::{SendError, Sender};
+use log::error;
+use log::warn;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 const SEEK_IGNORE_THRES: f64 = 0.2;
 
@@ -169,7 +168,7 @@ impl StateMachine {
                 mpv::Event::SuccessResponse { .. } => (), // ignore
                 mpv::Event::ErrorResponse { error, .. } => {
                     // TODO: maybe we want to abort here
-                    eprintln!("mpv: command response error: {}", error);
+                    error!("statemachine: command response error: {}", error);
                 }
                 mpv::Event::Seek => {
                     // self.local_state.seeking = true,
@@ -227,7 +226,7 @@ impl StateMachine {
                     self.local_state.seeking = true;
                 }
                 mpv::Event::Event { event } => {
-                    eprintln!("warn: unknown event_type: {}", event);
+                    warn!("statemachine: unknown event_type: {}", event);
                 }
             },
             Event::Network(event) => {

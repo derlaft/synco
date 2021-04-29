@@ -6,6 +6,8 @@ use defer::defer;
 use futures_lite::future::or;
 use futures_lite::io::{AsyncBufReadExt, BufReader, ReadHalf, WriteHalf};
 use futures_lite::prelude::*;
+use log::debug;
+use log::warn;
 use serde::{self, Deserialize, Serialize};
 use serde_json::json;
 use serde_tuple::Serialize_tuple;
@@ -85,12 +87,6 @@ pub enum Property {
     Seeking,
     #[serde(rename = "pause")]
     Pause,
-}
-
-#[derive(Debug)]
-pub enum BoolProperty {
-    Speed,
-    Seeking,
 }
 
 #[derive(Debug)]
@@ -207,7 +203,7 @@ impl EventRaw {
                 "seek" => Some(Event::Seek),
                 // ignore all others for now
                 _ => {
-                    eprintln!("warn: unsupported event_type {}", event_type);
+                    warn!("mpv_parse_event: unsupported event_type {}", event_type);
                     None
                 }
             }
@@ -285,7 +281,7 @@ pub async fn start(
         path_obj.join(format!("syncors-{}.socket", std::process::id()))
     };
 
-    println!("socket path: {}", socket_path.to_str().unwrap());
+    debug!("socket path: {}", socket_path.to_str().unwrap());
 
     let mut child = Command::new("mpv")
         .arg(format!(
@@ -377,7 +373,7 @@ async fn read_loop(reader: ReadHalf<UnixStream>, msg_send: Sender<Event>) -> Res
 
         // some events may be skipped for now
         if let Some(parsed_event) = event.parse()? {
-            eprintln!("---> mpv: {:?}", parsed_event);
+            debug!("real_loop parsed_event: {:?}", parsed_event);
             msg_send.send(parsed_event).await?;
         }
     }
@@ -392,11 +388,14 @@ async fn write_loop(
     // just write mpv commands
     while let Some(msg) = msg_receive.next().await {
         let mut to_write = serde_json::to_vec(&msg.get_value())?;
-        to_write.push(b'\n');
-        eprint!(
-            "debug: mpv send line: {}",
+
+        debug!(
+            "write_loop next line: {}",
             String::from_utf8(to_write.clone()).unwrap()
         );
+
+        to_write.push(b'\n');
+
         writer.write(&to_write).await?;
     }
 

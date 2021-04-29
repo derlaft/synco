@@ -11,6 +11,9 @@ use libp2p::{
 
 use crate::proto;
 use async_channel::{Receiver, Sender};
+use log::debug;
+use log::error;
+use log::info;
 use std::sync::Arc;
 
 pub type Message = proto::Message;
@@ -69,7 +72,7 @@ pub async fn join(
 
     let peer_id = PeerId::from(id_keys.public());
 
-    println!("Local peer id: {:?}", peer_id);
+    info!("Local peer id: {:?}", peer_id);
 
     // TODO: don't use development transport
     let transport = libp2p::development_transport(id_keys).await?;
@@ -89,8 +92,8 @@ pub async fn join(
         // Called when `floodsub` produces an event.
         fn inject_event(&mut self, message: FloodsubEvent) {
             if let FloodsubEvent::Message(message) = message {
-                println!(
-                    "Received: '{:?}' from {:?}",
+                debug!(
+                    "network_behaviour_process: message '{:?}' from {:?}",
                     String::from_utf8_lossy(&message.data),
                     message.source
                 );
@@ -105,7 +108,7 @@ pub async fn join(
                         tap.send((message.source.to_string(), msg))
                             .await
                             .unwrap_or_else(|e| {
-                                eprintln!("p2p: error while sending message to tap: {}", e);
+                                error!("p2p: error while sending message to tap: {}", e);
                             })
                     })
                     // TODO: this is also not perfect
@@ -152,14 +155,14 @@ pub async fn join(
     if let Some(to_dial) = std::env::args().nth(2) {
         let addr: Multiaddr = to_dial.parse()?;
         swarm.dial_addr(addr)?;
-        println!("Dialed {:?}", to_dial)
+        info!("manual_dial: dialed {:?}", to_dial)
     }
 
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    swarm.listen_on("/ip4/0.0.0.0/tcp/4042".parse()?)?;
 
     // introduce lots of network issues
     // but make revan satisfied
-    swarm.listen_on("/ip6/::/tcp/0".parse()?)?;
+    swarm.listen_on("/ip6/::/tcp/4042".parse()?)?;
 
     loop {
         enum NextStep {
@@ -183,19 +186,19 @@ pub async fn join(
                         })
                     },
                     Err(err) => {
-                        println!("Stopping due to control error: {:?}", err);
+                        error!("Stopping due to control error: {:?}", err);
                         NextStep::Stop
                     },
                 },
                 event = f2 => {
-                    println!("Got swarm event: {:?}", event);
+                    error!("Got swarm event: {:?}", event);
                     NextStep::Nothing
                 },
             }
         } {
             NextStep::Nothing => continue,
             NextStep::Stop => {
-                println!("Unsubscribing from the topic");
+                info!("unsubscribing from the topic (pre-shutdown)");
                 swarm
                     .behaviour_mut()
                     .floodsub

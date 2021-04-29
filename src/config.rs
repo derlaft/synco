@@ -2,6 +2,7 @@ use crate::util::{expand, ExpandError};
 use base64;
 use libp2p::identity::ed25519::Keypair;
 use libp2p::identity::error::DecodingError;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::fs::File;
@@ -64,7 +65,7 @@ pub fn create() -> Result<Config, LoadError> {
     let file_path = get_config_path()?;
     let key = Keypair::generate().encode();
 
-    println!("generated key length: {}", key.len());
+    debug!("generated key length: {}", key.len());
 
     // create the resulting value
     let cfg = Config {

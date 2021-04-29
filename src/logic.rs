@@ -3,7 +3,7 @@ use crate::p2p;
 use crate::proto;
 use crate::statemachine;
 use async_channel::{Receiver, SendError, Sender};
-use smol::lock::Mutex;
+use log::{debug, info};
 use smol::stream::StreamExt;
 use smol::Timer;
 use std::sync::Arc;
@@ -67,8 +67,7 @@ impl Controller {
         }
 
         while let Some(event) = from_mpv_receive.next().await {
-            eprintln!("Got parsed event: {:?}", event);
-            // TODO
+            debug!("consume_mpv_events next(): {:?}", event);
             self.to_logic_send
                 .send(statemachine::Event::Mpv(event))
                 .await?;
@@ -94,6 +93,7 @@ impl Controller {
             statemachine::StateMachine::new(self.to_mpv_send.clone(), self.to_network_send.clone());
 
         while let Some(event) = r.next().await {
+            debug!("feed_logic next(): {:?}", event);
             state_machine.process_event(event).await?;
         }
 
@@ -106,8 +106,8 @@ impl Controller {
     ) -> Result<(), Error> {
         while let Some((from, msg)) = from_network_receive.next().await {
             // parse msg
-            eprintln!(
-                "Received a message from {}@{}: {:?}",
+            info!(
+                "consume_network_events: message from {}@{}: {:?}",
                 from, msg.user_id, msg.action,
             );
 
@@ -124,7 +124,6 @@ impl Controller {
 impl Controller {}
 
 pub async fn logic_controller(
-    user_id: String,
     from_mpv_receive: &mut Receiver<mpv::Event>,
     to_mpv_send: Sender<mpv::Request>,
     from_network_receive: &mut Receiver<(p2p::Peer, p2p::Message)>,
