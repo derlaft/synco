@@ -24,7 +24,10 @@ fn main() {
     let (from_network_send, mut from_network_receive) = async_channel::bounded(CHANNEL_SIZE);
     let (to_network_send, to_network_receive) = async_channel::bounded(CHANNEL_SIZE);
 
+    #[cfg(not(feature = "relay"))]
     let (to_mpv_send, mut to_mpv_receive) = async_channel::bounded(CHANNEL_SIZE);
+
+    #[cfg(not(feature = "relay"))]
     let (from_mpv_send, mut from_mpv_receive) = async_channel::bounded(CHANNEL_SIZE);
 
     let config = config::load().unwrap();
@@ -34,6 +37,22 @@ fn main() {
         Keypair::Ed25519(keypair)
     };
 
+    #[cfg(feature = "relay")]
+    {
+        smol::block_on(async {
+            join(
+                keypair,
+                user_id.clone().as_str(),
+                room_id,
+                to_network_receive,
+                from_network_send,
+            )
+            .await
+            .unwrap_or_else(move |e| error!("p2p worker error, shutting down: {}", e));
+        });
+    };
+
+    #[cfg(not(feature = "relay"))]
     smol::block_on(smol::future::zip(
         // mpv worker
         async {

@@ -91,31 +91,34 @@ pub async fn join(
     impl NetworkBehaviourEventProcess<FloodsubEvent> for SyncoNetworkBehaviour {
         // Called when `floodsub` produces an event.
         fn inject_event(&mut self, message: FloodsubEvent) {
-            if let FloodsubEvent::Message(message) = message {
-                debug!(
-                    "network_behaviour_process: message '{:?}' from {:?}",
-                    String::from_utf8_lossy(&message.data),
-                    message.source
-                );
+            #[cfg(not(feature = "relay"))]
+            {
+                if let FloodsubEvent::Message(message) = message {
+                    debug!(
+                        "network_behaviour_process: message '{:?}' from {:?}",
+                        String::from_utf8_lossy(&message.data),
+                        message.source
+                    );
 
-                {
-                    // I wonder how ugly is too much ugly
-                    let tap = self.tap.clone();
-                    smol::spawn(async move {
-                        let msg: proto::Message =
-                            serde_json::from_slice(message.data.as_slice()).unwrap(); // TODO unwrap
+                    {
+                        // I wonder how ugly is too much ugly
+                        let tap = self.tap.clone();
+                        smol::spawn(async move {
+                            let msg: proto::Message =
+                                serde_json::from_slice(message.data.as_slice()).unwrap(); // TODO unwrap
 
-                        tap.send((message.source.to_string(), msg))
-                            .await
-                            .unwrap_or_else(|e| {
-                                error!("p2p: error while sending message to tap: {}", e);
-                            })
-                    })
-                    // TODO: this is also not perfect
-                    // messages may appear out of order
-                    // (well, they may appear out of order for too many reasons...)
-                    .detach();
-                };
+                            tap.send((message.source.to_string(), msg))
+                                .await
+                                .unwrap_or_else(|e| {
+                                    error!("p2p: error while sending message to tap: {}", e);
+                                })
+                        })
+                        // TODO: this is also not perfect
+                        // messages may appear out of order
+                        // (well, they may appear out of order for too many reasons...)
+                        .detach();
+                    };
+                }
             }
         }
     }
@@ -148,21 +151,23 @@ pub async fn join(
             tap: Arc::new(tap),
         };
 
+        #[cfg(not(feature = "relay"))]
         behaviour.floodsub.subscribe(floodsub_topic.clone());
+
         Swarm::new(transport, behaviour, peer_id)
     };
 
-    if let Some(to_dial) = std::env::args().nth(2) {
+    if let Ok(to_dial) = std::env::var("SYNCO_RELAY") {
         let addr: Multiaddr = to_dial.parse()?;
         swarm.dial_addr(addr)?;
         info!("manual_dial: dialed {:?}", to_dial)
     }
 
-    swarm.listen_on("/ip4/0.0.0.0/tcp/4042".parse()?)?;
+    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
     // introduce lots of network issues
     // but make revan satisfied
-    swarm.listen_on("/ip6/::/tcp/4042".parse()?)?;
+    swarm.listen_on("/ip6/::/tcp/0".parse()?)?;
 
     loop {
         enum NextStep {
@@ -206,13 +211,16 @@ pub async fn join(
                 return Ok(());
             }
             NextStep::Send(msg) => {
-                // TODO unwrap
-                let encoded = serde_json::to_vec(&msg).unwrap();
+                #[cfg(not(feature = "relay"))]
+                {
+                    // TODO unwrap
+                    let encoded = serde_json::to_vec(&msg).unwrap();
 
-                swarm
-                    .behaviour_mut()
-                    .floodsub
-                    .publish(floodsub_topic.clone(), encoded);
+                    swarm
+                        .behaviour_mut()
+                        .floodsub
+                        .publish(floodsub_topic.clone(), encoded);
+                }
             }
         };
     }
