@@ -1,5 +1,4 @@
 use libp2p::{
-    core::either::EitherTransport,
     core::muxing::StreamMuxerBox,
     core::transport,
     core::transport::upgrade::Version,
@@ -26,6 +25,7 @@ use log::debug;
 use log::error;
 use log::info;
 use log::warn;
+use smol::future;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -36,14 +36,6 @@ const PING_INTERVAL: Duration = Duration::from_secs(2);
 
 pub type Message = proto::Message;
 pub type Action = proto::Action;
-
-// TODO: find a way to replace select! with something
-// that is provided by futures-lite
-use futures::{
-    future::FutureExt, // for `.fuse()`
-    pin_mut,
-    select,
-};
 
 quick_error! {
     #[derive(Debug)]
@@ -209,14 +201,14 @@ pub async fn join(
             match event {
                 MdnsEvent::Discovered(list) => {
                     for (peer, _) in list {
-                        warn!("discovered peer {}", peer);
+                        warn!("mdns: discovered peer {}", peer);
                         self.gossipsub.add_explicit_peer(&peer);
                     }
                 }
                 MdnsEvent::Expired(list) => {
                     for (peer, _) in list {
                         if !self.mdns.has_node(&peer) {
-                            warn!("removing peer {}", peer);
+                            warn!("mdns: removing peer {}", peer);
                             self.gossipsub.remove_explicit_peer(&peer);
                         }
                     }
@@ -285,33 +277,41 @@ pub async fn join(
         }
 
         match {
-            let f1 = control.recv().fuse();
-            let f2 = swarm.next_event().fuse();
-
-            pin_mut!(f1, f2);
-
-            select! {
-                msg = f1 => match msg {
-                    Ok(msg) => {
+            async fn consume_control(user_id: String, control: Receiver<Action>) -> NextStep {
+                match control.recv().await {
+                    Ok(action) => {
                         let t = SystemTime::now();
                         let ts = t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
 
-                        NextStep::Send(proto::Message{
-                            ts: ts,
-                            action: msg,
-                            user_id: user_id.clone().to_string(),
+                        NextStep::Send(proto::Message {
+                            ts,
+                            action,
+                            user_id,
                         })
-                    },
+                    }
                     Err(err) => {
                         error!("Stopping due to control error: {:?}", err);
                         NextStep::Stop
-                    },
-                },
-                event = f2 => {
-                    info!("Got swarm event: {:?}", event);
-                    NextStep::Nothing
-                },
+                    }
+                }
             }
+
+            async fn swarm_future_wrap<F: future::Future>(f: F) -> NextStep
+            where
+                <F as smol::future::Future>::Output: std::fmt::Debug,
+            {
+                smol::pin!(f);
+                let ev = f.await;
+
+                info!("Got swarm event: {:?}", ev);
+                NextStep::Nothing
+            }
+
+            future::or(
+                consume_control(user_id.clone().to_string(), control.clone()),
+                swarm_future_wrap(swarm.next_event()),
+            )
+            .await
         } {
             NextStep::Nothing => continue,
             NextStep::Stop => {

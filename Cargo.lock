@@ -2675,7 +2675,6 @@ dependencies = [
  "base64 0.13.0",
  "defer",
  "env_logger",
- "futures",
  "futures-lite",
  "libc",
  "libp2p",
