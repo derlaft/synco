@@ -1,12 +1,23 @@
 use libp2p::{
-    floodsub::{self, Floodsub, FloodsubEvent},
-    identity::Keypair,
+    core::either::EitherTransport,
+    core::muxing::StreamMuxerBox,
+    core::transport,
+    core::transport::upgrade::Version,
+    identity::{self, Keypair},
     mdns::{Mdns, MdnsConfig, MdnsEvent},
     multiaddr,
-    noise::NoiseError,
+    noise::{self, NoiseError},
+    ping::{self, Ping, PingConfig, PingEvent},
     swarm,
     swarm::NetworkBehaviourEventProcess,
-    Multiaddr, NetworkBehaviour, PeerId, Swarm, TransportError,
+    tcp::TcpConfig,
+    yamux::YamuxConfig,
+    Multiaddr, NetworkBehaviour, PeerId, Swarm, Transport, TransportError,
+};
+
+use libp2p::gossipsub::{
+    self, error::PublishError, error::SubscriptionError, Gossipsub, GossipsubEvent,
+    GossipsubMessage, IdentTopic as Topic, MessageAuthenticity, MessageId, ValidationMode,
 };
 
 use crate::proto;
@@ -14,7 +25,14 @@ use async_channel::{Receiver, Sender};
 use log::debug;
 use log::error;
 use log::info;
+use log::warn;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::time::Duration;
+use std::time::SystemTime;
+
+const PING_INTERVAL: Duration = Duration::from_secs(2);
 
 pub type Message = proto::Message;
 pub type Action = proto::Action;
@@ -51,6 +69,12 @@ quick_error! {
         JSONError(err: serde_json::Error) {
             from()
         }
+        SubscriptionError(err: SubscriptionError) {
+            from()
+        }
+        PublishError(err: PublishError) {
+            from()
+        }
     }
 }
 
@@ -60,6 +84,22 @@ pub struct LogicError {
 }
 
 pub type Peer = String;
+
+pub fn build_transport(
+    key_pair: identity::Keypair,
+) -> Result<transport::Boxed<(PeerId, StreamMuxerBox)>, JoinError> {
+    let noise_keys = noise::Keypair::<noise::X25519Spec>::new().into_authentic(&key_pair)?;
+    let noise_config = noise::NoiseConfig::xx(noise_keys).into_authenticated();
+    let yamux_config = YamuxConfig::default();
+    let base_transport = TcpConfig::new().nodelay(true);
+
+    Ok(base_transport
+        .upgrade(Version::V1)
+        .authenticate(noise_config)
+        .multiplex(yamux_config)
+        // .timeout(Duration::from_secs(60))
+        .boxed())
+}
 
 pub async fn join(
     id_keys: Keypair,
@@ -74,51 +114,91 @@ pub async fn join(
 
     info!("Local peer id: {:?}", peer_id);
 
-    // TODO: don't use development transport
-    let transport = libp2p::development_transport(id_keys).await?;
+    let transport = build_transport(id_keys.clone())?;
 
-    let floodsub_topic = floodsub::Topic::new(topic_id);
+    let topic = Topic::new(topic_id);
 
     #[derive(NetworkBehaviour)]
     struct SyncoNetworkBehaviour {
-        floodsub: Floodsub,
+        gossipsub: Gossipsub,
         mdns: Mdns,
+        ping: Ping,
 
         #[behaviour(ignore)]
         tap: Arc<Sender<(Peer, Message)>>,
     }
 
-    impl NetworkBehaviourEventProcess<FloodsubEvent> for SyncoNetworkBehaviour {
-        // Called when `floodsub` produces an event.
-        fn inject_event(&mut self, message: FloodsubEvent) {
-            #[cfg(not(feature = "relay"))]
-            {
-                if let FloodsubEvent::Message(message) = message {
+    impl NetworkBehaviourEventProcess<PingEvent> for SyncoNetworkBehaviour {
+        // Called when `ping` produces an event.
+        fn inject_event(&mut self, event: PingEvent) {
+            use ping::handler::{PingFailure, PingSuccess};
+            match event {
+                PingEvent {
+                    peer,
+                    result: Result::Ok(PingSuccess::Ping { rtt }),
+                } => {
                     debug!(
-                        "network_behaviour_process: message '{:?}' from {:?}",
-                        String::from_utf8_lossy(&message.data),
-                        message.source
+                        "ping: rtt to {} is {} ms",
+                        peer.to_base58(),
+                        rtt.as_millis()
                     );
-
-                    {
-                        // I wonder how ugly is too much ugly
-                        let tap = self.tap.clone();
-                        smol::spawn(async move {
-                            let msg: proto::Message =
-                                serde_json::from_slice(message.data.as_slice()).unwrap(); // TODO unwrap
-
-                            tap.send((message.source.to_string(), msg))
-                                .await
-                                .unwrap_or_else(|e| {
-                                    error!("p2p: error while sending message to tap: {}", e);
-                                })
-                        })
-                        // TODO: this is also not perfect
-                        // messages may appear out of order
-                        // (well, they may appear out of order for too many reasons...)
-                        .detach();
-                    };
                 }
+                PingEvent {
+                    peer,
+                    result: Result::Ok(PingSuccess::Pong),
+                } => {
+                    debug!("ping: pong from {}", peer.to_base58());
+                }
+                PingEvent {
+                    peer,
+                    result: Result::Err(PingFailure::Timeout),
+                } => {
+                    debug!("ping: timeout to {}", peer.to_base58());
+                }
+                PingEvent {
+                    peer,
+                    result: Result::Err(PingFailure::Other { error }),
+                } => {
+                    debug!("ping: failure with {}: {}", peer.to_base58(), error);
+                }
+            }
+        }
+    }
+
+    impl NetworkBehaviourEventProcess<GossipsubEvent> for SyncoNetworkBehaviour {
+        fn inject_event(&mut self, message: GossipsubEvent) {
+            if let GossipsubEvent::Message {
+                message,
+                propagation_source,
+                ..
+            } = message
+            {
+                debug!(
+                    "peer {:?} sent message: {:?}",
+                    message.source,
+                    String::from_utf8_lossy(&message.data),
+                );
+
+                #[cfg(not(feature = "relay"))]
+                {
+                    // I wonder how ugly is too much ugly
+                    let tap = self.tap.clone();
+
+                    smol::spawn(async move {
+                        let msg: proto::Message =
+                            serde_json::from_slice(message.data.as_slice()).unwrap(); // TODO unwrap
+
+                        tap.send((propagation_source.to_base58(), msg))
+                            .await
+                            .unwrap_or_else(|e| {
+                                error!("p2p: error while sending message to tap: {}", e);
+                            })
+                    })
+                    // TODO: this is also not perfect
+                    // messages may appear out of order
+                    // (well, they may appear out of order for too many reasons...)
+                    .detach();
+                };
             }
         }
     }
@@ -129,13 +209,15 @@ pub async fn join(
             match event {
                 MdnsEvent::Discovered(list) => {
                     for (peer, _) in list {
-                        self.floodsub.add_node_to_partial_view(peer);
+                        warn!("discovered peer {}", peer);
+                        self.gossipsub.add_explicit_peer(&peer);
                     }
                 }
                 MdnsEvent::Expired(list) => {
                     for (peer, _) in list {
                         if !self.mdns.has_node(&peer) {
-                            self.floodsub.remove_node_from_partial_view(&peer);
+                            warn!("removing peer {}", peer);
+                            self.gossipsub.remove_explicit_peer(&peer);
                         }
                     }
                 }
@@ -145,14 +227,40 @@ pub async fn join(
 
     let mut swarm = {
         let mdns = Mdns::new(MdnsConfig::default()).await?;
+        let ping = Ping::new(
+            PingConfig::new()
+                .with_interval(PING_INTERVAL)
+                .with_keep_alive(true),
+        );
+
+        let message_id_fn = |message: &GossipsubMessage| {
+            let mut s = DefaultHasher::new();
+            message.data.hash(&mut s);
+            MessageId::from(s.finish().to_string())
+        };
+
+        let gossipsub_config = gossipsub::GossipsubConfigBuilder::default()
+            .heartbeat_interval(Duration::from_secs(10))
+            .validation_mode(ValidationMode::Strict)
+            .message_id_fn(message_id_fn)
+            .build()
+            .expect("Valid config"); // TODO
+
+        let gossipsub = Gossipsub::new(
+            MessageAuthenticity::Signed(id_keys.clone()),
+            gossipsub_config,
+        )
+        .expect("Gossipsub creation failed"); // TODO
+
         let mut behaviour = SyncoNetworkBehaviour {
-            floodsub: Floodsub::new(peer_id.clone()),
+            gossipsub,
             mdns,
+            ping,
             tap: Arc::new(tap),
         };
 
-        #[cfg(not(feature = "relay"))]
-        behaviour.floodsub.subscribe(floodsub_topic.clone());
+        // #[cfg(not(feature = "relay"))]
+        behaviour.gossipsub.subscribe(&topic)?;
 
         Swarm::new(transport, behaviour, peer_id)
     };
@@ -185,7 +293,11 @@ pub async fn join(
             select! {
                 msg = f1 => match msg {
                     Ok(msg) => {
+                        let t = SystemTime::now();
+                        let ts = t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+
                         NextStep::Send(proto::Message{
+                            ts: ts,
                             action: msg,
                             user_id: user_id.clone().to_string(),
                         })
@@ -196,7 +308,7 @@ pub async fn join(
                     },
                 },
                 event = f2 => {
-                    error!("Got swarm event: {:?}", event);
+                    info!("Got swarm event: {:?}", event);
                     NextStep::Nothing
                 },
             }
@@ -204,10 +316,7 @@ pub async fn join(
             NextStep::Nothing => continue,
             NextStep::Stop => {
                 info!("unsubscribing from the topic (pre-shutdown)");
-                swarm
-                    .behaviour_mut()
-                    .floodsub
-                    .unsubscribe(floodsub_topic.clone());
+                swarm.behaviour_mut().gossipsub.unsubscribe(&topic)?;
                 return Ok(());
             }
             NextStep::Send(msg) => {
@@ -216,10 +325,16 @@ pub async fn join(
                     // TODO unwrap
                     let encoded = serde_json::to_vec(&msg).unwrap();
 
-                    swarm
+                    debug!("send data: {:?}", msg);
+
+                    match swarm
                         .behaviour_mut()
-                        .floodsub
-                        .publish(floodsub_topic.clone(), encoded);
+                        .gossipsub
+                        .publish(topic.clone(), encoded)
+                    {
+                        Ok(msgid) => info!("published new message: {}", msgid),
+                        Err(err) => error!("could not publish the message: {:?}", err),
+                    }
                 }
             }
         };

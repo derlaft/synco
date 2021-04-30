@@ -37,6 +37,8 @@ pub enum Action {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Message {
+    pub ts: u64,
+
     #[serde(rename = "u")]
     pub user_id: String,
 

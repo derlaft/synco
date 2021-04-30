@@ -5,3 +5,8 @@ vendor/pkg
 *.mp4
 *.mkv
 *.config
+
+# WIP
+relay
+Dockerfile
+docker-compose.yml
