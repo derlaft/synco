@@ -44,6 +44,7 @@ fn main() {
                 keypair,
                 user_id.clone().as_str(),
                 room_id,
+                config.listen_on,
                 to_network_receive,
                 from_network_send,
             )
@@ -67,6 +68,7 @@ fn main() {
                     keypair,
                     user_id.clone().as_str(),
                     room_id,
+                    config.listen_on,
                     to_network_receive,
                     from_network_send,
                 )

@@ -89,7 +89,7 @@ pub fn build_transport(
         .upgrade(Version::V1)
         .authenticate(noise_config)
         .multiplex(yamux_config)
-        // .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(8))
         .boxed())
 }
 
@@ -97,6 +97,7 @@ pub async fn join(
     id_keys: Keypair,
     user_id: &str,
     topic_id: &str,
+    listen_on: Vec<String>,
     control: Receiver<Action>,
     tap: Sender<(Peer, Message)>,
 ) -> Result<(), JoinError> {
@@ -263,7 +264,9 @@ pub async fn join(
         info!("manual_dial: dialed {:?}", to_dial)
     }
 
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    for addr in listen_on {
+        swarm.listen_on(addr.parse()?)?;
+    }
 
     // introduce lots of network issues
     // but make revan satisfied
@@ -324,7 +327,6 @@ pub async fn join(
                 {
                     // TODO unwrap
                     let encoded = serde_json::to_vec(&msg).unwrap();
-
                     debug!("send data: {:?}", msg);
 
                     match swarm
