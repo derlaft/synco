@@ -19,6 +19,8 @@ use libp2p::gossipsub::{
     GossipsubMessage, IdentTopic as Topic, MessageAuthenticity, MessageId, ValidationMode,
 };
 
+use crate::channels;
+use crate::config;
 use crate::proto;
 use async_channel::{Receiver, Sender};
 use log::debug;
@@ -67,6 +69,9 @@ quick_error! {
         PublishError(err: PublishError) {
             from()
         }
+        KeypairConfigError(err: config::DecodeKeypairError) {
+            from()
+        }
     }
 }
 
@@ -94,22 +99,24 @@ pub fn build_transport(
 }
 
 pub async fn join(
-    id_keys: Keypair,
-    user_id: &str,
-    topic_id: &str,
-    listen_on: Vec<String>,
-    control: Receiver<Action>,
-    tap: Sender<(Peer, Message)>,
+    config: config::Config,
+    channels: Option<channels::PeerChannels>,
 ) -> Result<(), JoinError> {
-    env_logger::init();
+    let keypair = {
+        let keypair = config.get_keypair()?;
+        Keypair::Ed25519(keypair)
+    };
 
-    let peer_id = PeerId::from(id_keys.public());
+    let peer_id = PeerId::from(keypair.public());
 
     info!("Local peer id: {:?}", peer_id);
 
-    let transport = build_transport(id_keys.clone())?;
+    let transport = build_transport(keypair.clone())?;
 
-    let topic = Topic::new(topic_id);
+    let topic = match config.room {
+        Some(room) => Some(Topic::new(room)),
+        None => None,
+    };
 
     #[derive(NetworkBehaviour)]
     struct SyncoNetworkBehaviour {
@@ -118,7 +125,7 @@ pub async fn join(
         ping: Ping,
 
         #[behaviour(ignore)]
-        tap: Arc<Sender<(Peer, Message)>>,
+        tap: Option<Arc<Sender<(Peer, Message)>>>,
     }
 
     impl NetworkBehaviourEventProcess<PingEvent> for SyncoNetworkBehaviour {
@@ -172,10 +179,8 @@ pub async fn join(
                     String::from_utf8_lossy(&message.data),
                 );
 
-                #[cfg(not(feature = "relay"))]
-                {
-                    // I wonder how ugly is too much ugly
-                    let tap = self.tap.clone();
+                if let Some(ref tap) = self.tap {
+                    let tap = tap.clone();
 
                     smol::spawn(async move {
                         let msg: proto::Message =
@@ -240,7 +245,7 @@ pub async fn join(
             .expect("Valid config"); // TODO
 
         let gossipsub = Gossipsub::new(
-            MessageAuthenticity::Signed(id_keys.clone()),
+            MessageAuthenticity::Signed(keypair.clone()),
             gossipsub_config,
         )
         .expect("Gossipsub creation failed"); // TODO
@@ -249,11 +254,15 @@ pub async fn join(
             gossipsub,
             mdns,
             ping,
-            tap: Arc::new(tap),
+            tap: match channels {
+                None => None,
+                Some(ref ch) => Some(Arc::new(ch.from_network_send.clone())),
+            },
         };
 
-        // #[cfg(not(feature = "relay"))]
-        behaviour.gossipsub.subscribe(&topic)?;
+        if let Some(ref topic) = topic {
+            behaviour.gossipsub.subscribe(topic)?;
+        }
 
         Swarm::new(transport, behaviour, peer_id)
     };
@@ -264,13 +273,9 @@ pub async fn join(
         info!("manual_dial: dialed {:?}", to_dial)
     }
 
-    for addr in listen_on {
+    for addr in config.listen_on {
         swarm.listen_on(addr.parse()?)?;
     }
-
-    // introduce lots of network issues
-    // but make revan satisfied
-    swarm.listen_on("/ip6/::/tcp/0".parse()?)?;
 
     loop {
         enum NextStep {
@@ -280,22 +285,28 @@ pub async fn join(
         }
 
         match {
-            async fn consume_control(user_id: String, control: Receiver<Action>) -> NextStep {
-                match control.recv().await {
-                    Ok(action) => {
-                        let t = SystemTime::now();
-                        let ts = t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+            async fn consume_control(
+                user_id: String,
+                control: Option<Receiver<Action>>,
+            ) -> NextStep {
+                match control {
+                    None => future::pending().await,
+                    Some(control) => match control.recv().await {
+                        Ok(action) => {
+                            let t = SystemTime::now();
+                            let ts = t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
 
-                        NextStep::Send(proto::Message {
-                            ts,
-                            action,
-                            user_id,
-                        })
-                    }
-                    Err(err) => {
-                        error!("Stopping due to control error: {:?}", err);
-                        NextStep::Stop
-                    }
+                            NextStep::Send(proto::Message {
+                                ts,
+                                action,
+                                user_id,
+                            })
+                        }
+                        Err(err) => {
+                            error!("Stopping due to control error: {:?}", err);
+                            NextStep::Stop
+                        }
+                    },
                 }
             }
 
@@ -310,21 +321,27 @@ pub async fn join(
                 NextStep::Nothing
             }
 
+            let consume_channel = match channels {
+                None => None,
+                Some(ref ch) => Some(ch.to_network_receive.clone()),
+            };
+
             future::or(
-                consume_control(user_id.clone().to_string(), control.clone()),
+                consume_control(config.id.clone(), consume_channel),
                 swarm_future_wrap(swarm.next_event()),
             )
             .await
         } {
             NextStep::Nothing => continue,
             NextStep::Stop => {
-                info!("unsubscribing from the topic (pre-shutdown)");
-                swarm.behaviour_mut().gossipsub.unsubscribe(&topic)?;
+                if let Some(ref topic) = topic {
+                    info!("unsubscribing from the topic (pre-shutdown)");
+                    swarm.behaviour_mut().gossipsub.unsubscribe(topic)?;
+                }
                 return Ok(());
             }
             NextStep::Send(msg) => {
-                #[cfg(not(feature = "relay"))]
-                {
+                if let Some(ref topic) = topic {
                     // TODO unwrap
                     let encoded = serde_json::to_vec(&msg).unwrap();
                     debug!("send data: {:?}", msg);

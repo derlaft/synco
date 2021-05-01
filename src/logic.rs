@@ -1,8 +1,9 @@
+use crate::channels;
 use crate::mpv;
 use crate::p2p;
 use crate::proto;
 use crate::statemachine;
-use async_channel::{Receiver, SendError, Sender};
+use async_channel::{Receiver, SendError};
 use log::{debug, info};
 use smol::stream::StreamExt;
 use smol::Timer;
@@ -39,9 +40,7 @@ pub struct LogicError {
 }
 
 struct Controller {
-    to_mpv_send: Sender<mpv::Request>,
-    to_network_send: Sender<p2p::Action>,
-    to_logic_send: Sender<statemachine::Event>,
+    channels: channels::LogicSenderChannels,
 }
 
 const UPKEEP_DUR: Duration = Duration::from_millis(1000);
@@ -63,12 +62,13 @@ impl Controller {
 
         // send init commands
         for init_cmd in init_seq {
-            self.to_mpv_send.send(init_cmd).await?;
+            self.channels.to_mpv_send.send(init_cmd).await?;
         }
 
         while let Some(event) = from_mpv_receive.next().await {
             debug!("consume_mpv_events next(): {:?}", event);
-            self.to_logic_send
+            self.channels
+                .to_logic_send
                 .send(statemachine::Event::Mpv(event))
                 .await?;
         }
@@ -78,7 +78,8 @@ impl Controller {
 
     async fn upkeep_timer(self: Arc<&Self>) -> Result<(), Error> {
         loop {
-            self.to_logic_send
+            self.channels
+                .to_logic_send
                 .send(statemachine::Event::KeepAlive)
                 .await?;
             Timer::after(UPKEEP_DUR).await;
@@ -89,8 +90,10 @@ impl Controller {
         self: Arc<&Self>,
         r: &mut Receiver<statemachine::Event>,
     ) -> Result<(), Error> {
-        let mut state_machine =
-            statemachine::StateMachine::new(self.to_mpv_send.clone(), self.to_network_send.clone());
+        let mut state_machine = statemachine::StateMachine::new(
+            self.channels.to_mpv_send.clone(),
+            self.channels.to_network_send.clone(),
+        );
 
         while let Some(event) = r.next().await {
             debug!("feed_logic next(): {:?}", event);
@@ -111,7 +114,8 @@ impl Controller {
                 from, msg.user_id, msg.action,
             );
 
-            self.to_logic_send
+            self.channels
+                .to_logic_send
                 .send(statemachine::Event::Network(msg))
                 .await?;
         }
@@ -123,21 +127,17 @@ impl Controller {
 // remote events handlers
 impl Controller {}
 
-pub async fn logic_controller(
-    from_mpv_receive: &mut Receiver<mpv::Event>,
-    to_mpv_send: Sender<mpv::Request>,
-    from_network_receive: &mut Receiver<(p2p::Peer, p2p::Message)>,
-    to_network_send: Sender<p2p::Action>,
-) -> Result<(), Error> {
+pub async fn logic_controller(channels: &mut channels::LogicChannels) -> Result<(), Error> {
     // pure madness controller
-    let (to_logic_send, mut from_logic_receive) = async_channel::bounded(256);
 
     let c = Controller {
-        to_mpv_send,
-        to_network_send,
-        to_logic_send,
+        channels: channels.senders(),
     };
     let c = Arc::new(&c);
+
+    let from_mpv_receive = &mut channels.from_mpv_receive;
+    let from_network_receive = &mut channels.from_network_receive;
+    let from_logic_receive = &mut channels.from_logic_receive;
 
     smol::future::or(
         smol::future::or(
@@ -147,7 +147,7 @@ pub async fn logic_controller(
             ),
             c.clone().upkeep_timer(),
         ),
-        c.clone().feed_logic(&mut from_logic_receive),
+        c.clone().feed_logic(from_logic_receive),
     )
     .await
 }

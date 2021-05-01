@@ -1,3 +1,4 @@
+use crate::channels;
 use crate::util;
 use async_channel::{Receiver, SendError, Sender};
 use async_process::{Child, Command, Stdio};
@@ -271,10 +272,7 @@ impl Request {
     }
 }
 
-pub async fn start(
-    msg_receive: &mut Receiver<Request>,
-    msg_send: Sender<Event>,
-) -> Result<(), MpvError> {
+pub async fn start(channels: &mut channels::MpvChannels) -> Result<(), MpvError> {
     let socket_path = {
         let tmp_dir = util::expand("$XDG_RUNTIME_DIR").unwrap_or("/tmp".to_string());
         let path_obj = std::path::Path::new(&tmp_dir);
@@ -302,7 +300,7 @@ pub async fn start(
     });
 
     smol::future::or(
-        synco_loop(&socket_path, msg_receive, msg_send),
+        synco_loop(&socket_path, channels),
         smol::future::or(wait_for_mpv(&mut child), wait_for_signal()),
     )
     .await
@@ -332,8 +330,7 @@ const CHECK_SOCKET_ATTEMPTS: i32 = 10;
 
 async fn synco_loop(
     socket_path: &PathBuf,
-    msg_receive: &mut Receiver<Request>,
-    msg_send: Sender<Event>,
+    channels: &mut channels::MpvChannels,
 ) -> Result<(), MpvError> {
     // first: waiting for socket
     for _ in 1..CHECK_SOCKET_ATTEMPTS {
@@ -356,13 +353,13 @@ async fn synco_loop(
     let (reader, mut writer) = smol::io::split(stream);
 
     or(
-        read_loop(reader, msg_send),
-        write_loop(&mut writer, msg_receive),
+        read_loop(reader, &channels.from_mpv_send),
+        write_loop(&mut writer, &mut channels.to_mpv_receive),
     )
     .await
 }
 
-async fn read_loop(reader: ReadHalf<UnixStream>, msg_send: Sender<Event>) -> Result<(), MpvError> {
+async fn read_loop(reader: ReadHalf<UnixStream>, msg_send: &Sender<Event>) -> Result<(), MpvError> {
     let reader = BufReader::new(reader);
 
     // just read mpv commands
@@ -386,7 +383,7 @@ async fn write_loop(
     msg_receive: &mut Receiver<Request>,
 ) -> Result<(), MpvError> {
     // just write mpv commands
-    while let Some(msg) = msg_receive.next().await {
+    while let Some(ref msg) = msg_receive.next().await {
         let mut to_write = serde_json::to_vec(&msg.get_value())?;
 
         debug!(

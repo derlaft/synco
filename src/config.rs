@@ -12,6 +12,7 @@ pub struct Config {
     private_key: String,
     pub id: String,
     pub listen_on: Vec<String>,
+    pub room: Option<String>,
 }
 
 quick_error! {
@@ -72,6 +73,7 @@ pub fn create() -> Result<Config, LoadError> {
     let cfg = Config {
         private_key: base64::encode_config(key, base64::STANDARD_NO_PAD),
         id: expand("$USER")?,
+        room: Some("@test".to_string()),
         listen_on: vec![
             "/ip4/0.0.0.0/tcp/0".to_string(),
             "/ip6/::/tcp/0".to_string(),

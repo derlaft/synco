@@ -8,6 +8,10 @@ edition = "2018"
 [features]
 relay = []
 
+[[bin]]
+name = "synco_client"
+path = "src/client.rs"
+
 [dependencies]
 quick-error = "2.0.0"
 serde = { version = "1.0.123", features = ["derive"] }
@@ -26,3 +30,4 @@ async-signals = "0.3.1"
 libc = "0.2.93"
 async-process = "1.1.0"
 serde_tuple = "0.5.0"
+futures-micro = "0.5.0"
