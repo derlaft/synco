@@ -4,10 +4,13 @@ use async_channel::{SendError, Sender};
 use log::error;
 use log::warn;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 const SEEK_IGNORE_THRES: f64 = 0.2;
 
 const MAX_DESYNC: f64 = 2.0;
+
+const LOG_DISPLAY_SEC: Duration = Duration::from_secs(1);
 
 pub struct StateMachine {
     to_mpv_send: Sender<mpv::Request>,
@@ -15,6 +18,7 @@ pub struct StateMachine {
     global_state: HashMap<String, State>,
     local_state: State,
     network_ready: bool,
+    log: Vec<LogEntry>,
 }
 
 #[derive(Default)]
@@ -25,6 +29,12 @@ struct State {
     paused: bool,
     seeking: bool,
     please_skip_sync_check: bool,
+}
+
+#[derive(Clone)]
+struct LogEntry {
+    when: Instant,
+    what: String,
 }
 
 quick_error! {
@@ -57,6 +67,7 @@ impl StateMachine {
             global_state: HashMap::new(),
             local_state: State::default(),
             network_ready: false,
+            log: vec![],
         };
 
         sm
@@ -64,9 +75,14 @@ impl StateMachine {
 
     async fn start_to_be_ready(&mut self) -> Result<(), Error> {
         self.local_state.ready = true;
-        self.to_mpv_send
-            .send(mpv::Request::display_message("ready"))
-            .await?;
+
+        self.log.push(LogEntry {
+            when: Instant::now(),
+            what: "you are ready".to_string(),
+        });
+
+        self.display_osd().await?;
+
         self.to_network_send.send(proto::Action::Ready).await?;
 
         Ok(())
@@ -76,11 +92,12 @@ impl StateMachine {
         self.local_state.ready = false;
         self.to_network_send.send(proto::Action::Unready).await?;
 
-        self.to_mpv_send
-            .send(mpv::Request::display_message(
-                format!("not ready: {}", reason).as_str(),
-            ))
-            .await?;
+        self.log.push(LogEntry {
+            when: Instant::now(),
+            what: format!("you not ready: {}", reason),
+        });
+
+        self.display_osd().await?;
 
         Ok(())
     }
@@ -91,9 +108,13 @@ impl StateMachine {
         self.to_mpv_send
             .send(mpv::Request::set_pause(false))
             .await?;
-        self.to_mpv_send
-            .send(mpv::Request::display_message("go"))
-            .await?;
+
+        self.log.push(LogEntry {
+            when: Instant::now(),
+            what: format!("everyone is ready, go"),
+        });
+
+        self.display_osd().await?;
 
         Ok(())
     }
@@ -108,11 +129,12 @@ impl StateMachine {
             self.stop_being_ready(reason).await?;
         }
 
-        self.to_mpv_send
-            .send(mpv::Request::display_message(
-                format!("stopped playback: {}", reason).as_str(),
-            ))
-            .await?;
+        self.log.push(LogEntry {
+            when: Instant::now(),
+            what: format!("stopped playback: {}", reason),
+        });
+
+        self.display_osd().await?;
 
         Ok(())
     }
@@ -125,10 +147,72 @@ impl StateMachine {
     }
 
     async fn on_other_join(&mut self, name: &str) -> Result<(), Error> {
+        self.log.push(LogEntry {
+            when: Instant::now(),
+            what: format!("oh hi {}", name),
+        });
+
+        self.display_osd().await?;
+
+        Ok(())
+    }
+
+    async fn display_osd(&mut self) -> Result<(), Error> {
+        // remove old log messages
+        self.log = self
+            .log
+            .clone()
+            .into_iter()
+            .filter(|x| x.when.elapsed() < LOG_DISPLAY_SEC)
+            .collect();
+
+        if self.log.len() == 0 && !self.local_state.paused {
+            // clear overlay
+            self.to_mpv_send.send(mpv::Request::osd_overlay("")).await?;
+            return Ok(());
+        }
+
+        let local_state = format!(
+            "ready: {}you{{\\r}} {}network{{\\r}}",
+            match self.local_state.ready {
+                false => "{\\c&HFF&}",
+                true => "{\\c&HFF00&}",
+            },
+            match self.network_ready {
+                false => "{\\c&HFF&}",
+                true => "{\\c&HFF00&}",
+            },
+        );
+
+        let remote_state = self
+            .global_state
+            .iter()
+            .map(|x| {
+                format!(
+                    "{}{}{{\\r}}",
+                    match x.1.ready {
+                        false => "{\\c&HFF&}",
+                        true => "{\\c&HFF00&}",
+                    },
+                    x.0,
+                )
+            })
+            .collect::<Vec<String>>()
+            .join("\\N");
+
+        let log_msgs = self
+            .log
+            .clone()
+            .into_iter()
+            .rev()
+            .map(|x| format!("{{\\fs40}}{}{{\\r}}", x.what))
+            .collect::<Vec<String>>()
+            .join("\\N");
+
+        let total_state = format!("\\N\\N{}\\N{}\\N{}", local_state, remote_state, log_msgs);
+
         self.to_mpv_send
-            .send(mpv::Request::display_message(
-                format!("Oh hi {}", name).as_str(),
-            ))
+            .send(mpv::Request::osd_overlay(total_state.as_str()))
             .await?;
 
         Ok(())
@@ -160,6 +244,8 @@ impl StateMachine {
                             .await?;
                     }
                 }
+
+                self.display_osd().await?;
 
                 self.local_state.please_skip_sync_check = false
             }
@@ -259,6 +345,13 @@ impl StateMachine {
                         if self.local_state.ready && self.network_ready {
                             self.start_playback().await?;
                         }
+
+                        self.log.push(LogEntry {
+                            when: Instant::now(),
+                            what: format!("{} is ready", from),
+                        });
+
+                        self.display_osd().await?;
                     }
 
                     proto::Action::Unready => {
@@ -269,6 +362,13 @@ impl StateMachine {
                             self.stop_playback(format!("{} is not ready", event.user_id).as_str())
                                 .await?;
                         }
+
+                        self.log.push(LogEntry {
+                            when: Instant::now(),
+                            what: format!("{} is not ready", from),
+                        });
+
+                        self.display_osd().await?;
                     }
 
                     proto::Action::Seek { pos } => {

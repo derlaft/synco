@@ -53,7 +53,7 @@ impl Controller {
     ) -> Result<(), Error> {
         // first step: initialize mpv
         let init_seq = vec![
-            mpv::Request::display_message("synco v3"),
+            mpv::Request::osd_overlay("synco v3: inititializing..."),
             mpv::Request::set_pause(true),
             mpv::Request::keybind("F1", "script_message ready_pressed"),
             mpv::Request::observe_property(mpv::Property::TimePos),
@@ -83,6 +83,7 @@ impl Controller {
                 .to_logic_send
                 .send(statemachine::Event::KeepAlive)
                 .await?;
+
             Timer::after(UPKEEP_DUR).await;
         }
     }
