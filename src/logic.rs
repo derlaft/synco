@@ -49,7 +49,7 @@ const UPKEEP_DUR: Duration = Duration::from_millis(1000);
 impl Controller {
     async fn consume_mpv_events(
         self: Arc<&Self>,
-        from_mpv_receive: &mut Receiver<mpv::Event>,
+        mut from_mpv_receive: Receiver<mpv::Event>,
     ) -> Result<(), Error> {
         // first step: initialize mpv
         let init_seq = vec![
@@ -89,7 +89,7 @@ impl Controller {
 
     async fn feed_logic(
         self: Arc<&Self>,
-        r: &mut Receiver<statemachine::Event>,
+        mut r: Receiver<statemachine::Event>,
     ) -> Result<(), Error> {
         let mut state_machine = statemachine::StateMachine::new(
             self.channels.to_mpv_send.clone(),
@@ -106,7 +106,7 @@ impl Controller {
 
     async fn consume_network_events(
         self: Arc<&Self>,
-        from_network_receive: &mut Receiver<(p2p::Peer, p2p::Message)>,
+        mut from_network_receive: Receiver<(p2p::Peer, p2p::Message)>,
     ) -> Result<(), Error> {
         while let Some((from, msg)) = from_network_receive.next().await {
             // parse msg
@@ -128,7 +128,7 @@ impl Controller {
 // remote events handlers
 impl Controller {}
 
-pub async fn logic_controller(channels: &mut channels::LogicChannels) -> Result<(), Error> {
+pub async fn logic_controller(channels: channels::LogicChannels) -> Result<(), Error> {
     // pure madness controller
 
     let c = Controller {
@@ -136,9 +136,9 @@ pub async fn logic_controller(channels: &mut channels::LogicChannels) -> Result<
     };
     let c = Arc::new(&c);
 
-    let from_mpv_receive = &mut channels.from_mpv_receive;
-    let from_network_receive = &mut channels.from_network_receive;
-    let from_logic_receive = &mut channels.from_logic_receive;
+    let from_mpv_receive = channels.from_mpv_receive;
+    let from_network_receive = channels.from_network_receive;
+    let from_logic_receive = channels.from_logic_receive;
 
     futures_micro::or!(
         c.clone().consume_mpv_events(from_mpv_receive),

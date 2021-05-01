@@ -292,7 +292,7 @@ impl Request {
     }
 }
 
-pub async fn start(channels: &mut channels::MpvChannels) -> Result<(), MpvError> {
+pub async fn start(channels: channels::MpvChannels) -> Result<(), MpvError> {
     let socket_path = {
         let tmp_dir = util::expand("$XDG_RUNTIME_DIR").unwrap_or("/tmp".to_string());
         let path_obj = std::path::Path::new(&tmp_dir);
@@ -350,7 +350,7 @@ const CHECK_SOCKET_ATTEMPTS: i32 = 10;
 
 async fn synco_loop(
     socket_path: &PathBuf,
-    channels: &mut channels::MpvChannels,
+    channels: channels::MpvChannels,
 ) -> Result<(), MpvError> {
     // first: waiting for socket
     for _ in 1..CHECK_SOCKET_ATTEMPTS {
@@ -372,14 +372,17 @@ async fn synco_loop(
 
     let (reader, mut writer) = smol::io::split(stream);
 
+    let from_mpv_send = channels.from_mpv_send;
+    let to_mpv_receive = channels.to_mpv_receive;
+
     or(
-        read_loop(reader, &channels.from_mpv_send),
-        write_loop(&mut writer, &mut channels.to_mpv_receive),
+        read_loop(reader, from_mpv_send),
+        write_loop(&mut writer, to_mpv_receive),
     )
     .await
 }
 
-async fn read_loop(reader: ReadHalf<UnixStream>, msg_send: &Sender<Event>) -> Result<(), MpvError> {
+async fn read_loop(reader: ReadHalf<UnixStream>, msg_send: Sender<Event>) -> Result<(), MpvError> {
     let reader = BufReader::new(reader);
 
     // just read mpv commands
@@ -400,7 +403,7 @@ async fn read_loop(reader: ReadHalf<UnixStream>, msg_send: &Sender<Event>) -> Re
 
 async fn write_loop(
     writer: &mut WriteHalf<UnixStream>,
-    msg_receive: &mut Receiver<Request>,
+    mut msg_receive: Receiver<Request>,
 ) -> Result<(), MpvError> {
     // just write mpv commands
     while let Some(ref msg) = msg_receive.next().await {

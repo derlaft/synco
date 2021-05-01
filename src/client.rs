@@ -23,9 +23,9 @@ fn main() {
 
     let mut channels = channels::SyncoChannels::new_client();
 
-    let mpv_channels = &mut channels.mpv;
+    let mpv_channels = channels.mpv;
     let p2p_channels = channels.p2p;
-    let logic_channels = &mut channels.logic;
+    let logic_channels = channels.logic;
 
     smol::block_on(futures_micro::zip!(
         // mpv worker
