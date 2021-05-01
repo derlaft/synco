@@ -21,7 +21,7 @@ pub struct LogicChannels {
 }
 
 impl LogicChannels {
-    pub fn senders(&self) -> LogicSenderChannels {
+    pub fn split(&self) -> LogicSenderChannels {
         LogicSenderChannels {
             to_mpv_send: self.to_mpv_send.clone(),
             to_network_send: self.to_network_send.clone(),

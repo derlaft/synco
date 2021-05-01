@@ -64,6 +64,8 @@ pub struct Request {
     command: RequestType,
     v1: serde_json::Value,
     v2: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    v3: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,6 +78,8 @@ pub enum RequestType {
     SetProperty,
     #[serde(rename = "osd-msg")]
     OSDMsg,
+    #[serde(rename = "osd-overlay")]
+    OSDOverlay,
 }
 
 #[derive(Debug, Serialize)]
@@ -222,6 +226,7 @@ impl Request {
             command: RequestType::SetProperty,
             v1: json!(Property::Pause),
             v2: json!(val),
+            v3: None,
         }
     }
 
@@ -230,6 +235,7 @@ impl Request {
             command: RequestType::SetProperty,
             v1: json!(Property::TimePos),
             v2: json!(val),
+            v3: None,
         }
     }
 
@@ -238,6 +244,7 @@ impl Request {
             command: RequestType::SetProperty,
             v1: json!(Property::Speed),
             v2: json!(val),
+            v3: None,
         }
     }
 
@@ -246,6 +253,7 @@ impl Request {
             command: RequestType::ObserveProperty,
             v1: json!(1),
             v2: json!(property),
+            v3: None,
         }
     }
 
@@ -254,6 +262,17 @@ impl Request {
             command: RequestType::OSDMsg,
             v1: json!("show-text"),
             v2: json!(msg),
+            v3: None,
+        }
+    }
+
+    pub fn osd_overlay(data: &str) -> Request {
+        const REQUEST_ID: usize = 42;
+        Request {
+            command: RequestType::OSDOverlay,
+            v1: json!(42),
+            v2: json!("ass-events"),
+            v3: Some(json!(data)),
         }
     }
 
@@ -262,6 +281,7 @@ impl Request {
             command: RequestType::Keybind,
             v1: json!(key),
             v2: json!(command),
+            v3: None,
         }
     }
 
