@@ -4,6 +4,7 @@ use crate::p2p;
 use crate::proto;
 use crate::statemachine;
 use async_channel::{Receiver, SendError};
+use futures_micro;
 use log::{debug, info};
 use smol::stream::StreamExt;
 use smol::Timer;
@@ -139,14 +140,10 @@ pub async fn logic_controller(channels: &mut channels::LogicChannels) -> Result<
     let from_network_receive = &mut channels.from_network_receive;
     let from_logic_receive = &mut channels.from_logic_receive;
 
-    smol::future::or(
-        smol::future::or(
-            smol::future::or(
-                c.clone().consume_mpv_events(from_mpv_receive),
-                c.clone().consume_network_events(from_network_receive),
-            ),
-            c.clone().upkeep_timer(),
-        ),
+    futures_micro::or!(
+        c.clone().consume_mpv_events(from_mpv_receive),
+        c.clone().consume_network_events(from_network_receive),
+        c.clone().upkeep_timer(),
         c.clone().feed_logic(from_logic_receive),
     )
     .await

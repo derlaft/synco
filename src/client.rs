@@ -27,26 +27,24 @@ fn main() {
     let p2p_channels = channels.p2p;
     let logic_channels = &mut channels.logic;
 
-    smol::block_on(smol::future::zip(
+    smol::block_on(futures_micro::zip!(
         // mpv worker
         async {
             mpv::start(mpv_channels)
                 .await
                 .unwrap_or_else(move |e| error!("mpv worker error, shutting down: {}", e));
         },
-        smol::future::zip(
-            // p2p worker
-            async {
-                join(config, Some(p2p_channels))
-                    .await
-                    .unwrap_or_else(move |e| error!("p2p worker error, shutting down: {}", e));
-            },
-            // logic controller
-            async {
-                logic_controller(logic_channels)
-                    .await
-                    .unwrap_or_else(move |e| error!("logic worker error, shutting down: {}", e));
-            },
-        ),
+        // p2p worker
+        async {
+            join(config, Some(p2p_channels))
+                .await
+                .unwrap_or_else(move |e| error!("p2p worker error, shutting down: {}", e));
+        },
+        // logic controller
+        async {
+            logic_controller(logic_channels)
+                .await
+                .unwrap_or_else(move |e| error!("logic worker error, shutting down: {}", e));
+        },
     ));
 }
