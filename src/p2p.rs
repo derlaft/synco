@@ -293,8 +293,10 @@ pub async fn join(
                     None => future::pending().await,
                     Some(control) => match control.recv().await {
                         Ok(action) => {
-                            let t = SystemTime::now();
-                            let ts = t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+                            let ts = SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis() as u64; // TODO: overflows? :/
 
                             NextStep::Send(proto::Message {
                                 ts,

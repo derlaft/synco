@@ -80,6 +80,8 @@ pub enum RequestType {
     OSDMsg,
     #[serde(rename = "osd-overlay")]
     OSDOverlay,
+    #[serde(rename = "seek")]
+    Seek,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,6 +102,11 @@ pub enum FloatProperty {
     Speed,
 }
 
+#[derive(Debug)]
+pub enum BoolProperty {
+    Seeking,
+}
+
 #[derive(Debug, Deserialize)]
 struct EventRaw {
     request_id: Option<i32>,
@@ -117,6 +124,7 @@ pub enum Event {
     Event { event: String },
     ClientMessage { id: String },
     FloatPropertyChange { property: FloatProperty, value: f64 },
+    BoolPropertyChange { property: BoolProperty, value: bool },
     Seek,
 }
 
@@ -133,6 +141,21 @@ impl EventRaw {
         } else {
             // default values are ommited :/
             Ok(0.0)
+        }
+    }
+
+    fn take_data_bool(&self) -> Result<bool, MpvError> {
+        if let Some(ref value) = self.data {
+            match value {
+                serde_json::Value::Bool(v) => Ok(*v),
+                _ => Err(EventParsingError {
+                    reason: "Expected .data to be float, got something else".to_string(),
+                }
+                .into()),
+            }
+        } else {
+            // default values are ommited :/
+            Ok(false)
         }
     }
 
@@ -197,6 +220,10 @@ impl EventRaw {
                                 property: FloatProperty::Speed,
                                 value: self.take_data_f64()?,
                             }),
+                            "seeking" => Some(Event::BoolPropertyChange {
+                                property: BoolProperty::Seeking,
+                                value: self.take_data_bool()?,
+                            }),
                             // TODO: seeking bool
                             _ => None,
                         }
@@ -232,9 +259,9 @@ impl Request {
 
     pub fn seek(val: f64) -> Request {
         Request {
-            command: RequestType::SetProperty,
-            v1: json!(Property::TimePos),
-            v2: json!(val),
+            command: RequestType::Seek,
+            v1: json!(val),
+            v2: json!("absolute+exact"),
             v3: None,
         }
     }
