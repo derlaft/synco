@@ -400,6 +400,7 @@ impl StateMachine {
                                 when: Instant::now(),
                                 what: format!("{} changed speed to {}", from, speed),
                             });
+                            self.display_osd().await?;
                         }
                     }
                 }
