@@ -257,20 +257,10 @@ impl Request {
         }
     }
 
-    pub fn display_message(msg: &str) -> Request {
-        Request {
-            command: RequestType::OSDMsg,
-            v1: json!("show-text"),
-            v2: json!(msg),
-            v3: None,
-        }
-    }
-
     pub fn osd_overlay(data: &str) -> Request {
-        const REQUEST_ID: usize = 42;
         Request {
             command: RequestType::OSDOverlay,
-            v1: json!(42),
+            v1: json!(4),
             v2: json!("ass-events"),
             v3: Some(json!(data)),
         }

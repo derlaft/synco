@@ -273,7 +273,12 @@ impl StateMachine {
                             self.local_state.please_skip_sync_check = false
                         }
                     }
-                    mpv::FloatProperty::Speed => self.local_state.speed = value,
+                    mpv::FloatProperty::Speed => {
+                        self.local_state.speed = value;
+                        self.to_network_send
+                            .send(proto::Action::Speed { speed: value })
+                            .await?;
+                    }
                 },
                 mpv::Event::ClientMessage { id } if id == "ready_pressed" => {
                     if self.local_state.ready {
@@ -388,6 +393,14 @@ impl StateMachine {
 
                     proto::Action::Speed { speed } => {
                         node_state.speed = speed;
+
+                        if (self.local_state.speed - speed).abs() > 0.1 {
+                            self.to_mpv_send.send(mpv::Request::speed(speed)).await?;
+                            self.log.push(LogEntry {
+                                when: Instant::now(),
+                                what: format!("{} changed speed to {}", from, speed),
+                            });
+                        }
                     }
                 }
             }

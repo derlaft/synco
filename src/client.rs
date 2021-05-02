@@ -21,7 +21,7 @@ fn main() {
 
     let config = config::load().unwrap();
 
-    let mut channels = channels::SyncoChannels::new_client();
+    let channels = channels::SyncoChannels::new_client();
 
     let mpv_channels = channels.mpv;
     let p2p_channels = channels.p2p;

@@ -5,12 +5,14 @@ authors = ["Aleksei Kharlamov <aleksei.kharlamov@zattoo.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[features]
-relay = []
 
 [[bin]]
 name = "synco_client"
 path = "src/client.rs"
+
+[[bin]]
+name = "synco_relay"
+path = "src/relay.rs"
 
 [dependencies]
 quick-error = "2.0.0"
