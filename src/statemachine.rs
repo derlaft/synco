@@ -294,6 +294,7 @@ impl StateMachine {
                 if !self.local_state.paused
                     && !self.local_state.seeking
                     && !self.send_remote_seek_on_next_pos
+                    && !self.need_to_process_seek
                     && self.last_seek.elapsed().as_secs_f64() > SKIP_DESYNC_AFTER_SEEK_S
                 {
                     let desync = self
