@@ -261,7 +261,8 @@ impl Request {
         Request {
             command: RequestType::Seek,
             v1: json!(val),
-            v2: json!("absolute+exact"),
+            // v2: json!("absolute+exact"),
+            v2: json!("absolute+keyframes"),
             v3: None,
         }
     }
