@@ -44,7 +44,7 @@ struct Controller {
     channels: channels::LogicSenderChannels,
 }
 
-const UPKEEP_DUR: Duration = Duration::from_millis(1000);
+const UPKEEP_DUR: Duration = Duration::from_millis(500);
 
 impl Controller {
     async fn consume_mpv_events(

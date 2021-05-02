@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, SystemTimeError};
 
 const SEEK_IGNORE_THRES: f64 = 0.5;
 
-const MAX_DESYNC: f64 = 3.0;
+const MAX_DESYNC: f64 = 1.5;
 
 const SKIP_DESYNC_AFTER_SEEK_S: f64 = 2.0;
 
@@ -26,8 +26,8 @@ pub struct StateMachine {
     log: Vec<LogEntry>,
     network_seek_target: Option<NetworkTarget>,
     last_seek: Instant,
-    need_to_process_seek: bool,
     send_remote_seek_on_next_pos: bool,
+    last_seekrelated_event: Instant,
 }
 
 #[derive(Default)]
@@ -81,8 +81,8 @@ impl StateMachine {
             log: vec![],
             network_seek_target: None,
             last_seek: Instant::now(),
-            need_to_process_seek: false,
             send_remote_seek_on_next_pos: false,
+            last_seekrelated_event: Instant::now(),
         };
 
         // should be paused at startup
@@ -293,23 +293,43 @@ impl StateMachine {
                     })
                     .await?;
 
+                let recent_network_seek = match self.network_seek_target {
+                    None => false,
+                    Some(v) => v.0.elapsed()?.as_secs_f64() < SKIP_DESYNC_AFTER_SEEK_S,
+                };
+
+                debug!("WAT: recent_network_seek: {}", recent_network_seek);
+
                 // check desync
                 if !self.local_state.paused
-                    && !self.local_state.seeking
-                    && !self.send_remote_seek_on_next_pos
-                    && !self.need_to_process_seek
-                    && self.last_seek.elapsed().as_secs_f64() > SKIP_DESYNC_AFTER_SEEK_S
+                    && self.last_seekrelated_event.elapsed().as_secs_f64()
+                        > SKIP_DESYNC_AFTER_SEEK_S
                 {
+                    debug!("WAT: actually checking desync!",);
+
                     let desync = self
                         .global_state
-                        .values()
-                        .map(|v| (v.position - self.local_state.position).abs())
-                        .max_by(|a, b| a.partial_cmp(b).unwrap())
-                        .unwrap_or_default();
+                        .iter()
+                        .map(|v| {
+                            (
+                                v.0.clone(), // from
+                                (v.1.position - self.local_state.position).abs(),
+                            )
+                        })
+                        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-                    if desync > MAX_DESYNC {
-                        self.stop_playback(format!("desync of {} detected", desync).as_str())
+                    if let Some(desync) = desync {
+                        if desync.1 > MAX_DESYNC {
+                            self.stop_playback(
+                                format!(
+                                    "{} is out of sync by {}, stopping",
+                                    desync.0.clone(),
+                                    desync.1
+                                )
+                                .as_str(),
+                            )
                             .await?;
+                        }
                     }
                 }
 
@@ -323,16 +343,12 @@ impl StateMachine {
                     error!("statemachine: command response error: {}", error);
                 }
                 mpv::Event::Seek => {
-                    // self.local_state.seeking = true,
+                    self.last_seekrelated_event = Instant::now();
                 }
                 mpv::Event::BoolPropertyChange { property, value } => match property {
                     mpv::BoolProperty::Seeking => {
-                        let old = self.local_state.seeking;
                         self.local_state.seeking = value;
-
-                        if old && !value {
-                            self.need_to_process_seek = true;
-                        };
+                        self.last_seekrelated_event = Instant::now();
                     }
                 },
                 mpv::Event::FloatPropertyChange { property, value } => match property {
@@ -343,7 +359,10 @@ impl StateMachine {
                             debug!("WAT seeking kostyl {}", self.local_state.position);
                             self.to_network_send
                                 .send(proto::Action::Seek {
-                                    pos: self.local_state.position,
+                                    pos: match self.local_state.position.is_sign_positive() {
+                                        true => self.local_state.position,
+                                        false => 0.0,
+                                    },
                                 })
                                 .await?;
                             self.send_remote_seek_on_next_pos = false;
@@ -392,17 +411,7 @@ impl StateMachine {
                     }
                 }
                 mpv::Event::Event { event } if event == "playback-restart" => {
-                    if self.need_to_process_seek {
-                        let cp = self.calculated_pos()?;
-
-                        debug!(
-                            "WAT fienaly seeked to {}, while network target is {:?}",
-                            self.local_state.position, cp,
-                        );
-
-                        self.seeking_target_check().await?;
-                        self.need_to_process_seek = false;
-                    }
+                    self.seeking_target_check().await?;
                 }
                 mpv::Event::Event { event } => {
                     warn!("statemachine: unknown event_type: {}", event);
@@ -466,6 +475,7 @@ impl StateMachine {
                     }
 
                     proto::Action::Seek { pos } => {
+                        self.last_seekrelated_event = Instant::now();
                         node_state.position = pos;
                         self.last_seek = Instant::now();
 
