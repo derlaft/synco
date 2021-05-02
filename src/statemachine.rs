@@ -72,7 +72,7 @@ impl StateMachine {
         to_mpv_send: Sender<mpv::Request>,
         to_network_send: Sender<proto::Action>,
     ) -> StateMachine {
-        let sm = StateMachine {
+        let mut sm = StateMachine {
             to_mpv_send,
             to_network_send,
             global_state: HashMap::new(),
@@ -84,6 +84,9 @@ impl StateMachine {
             need_to_process_seek: false,
             send_remote_seek_on_next_pos: false,
         };
+
+        // should be paused at startup
+        sm.local_state.paused = true;
 
         sm
     }
